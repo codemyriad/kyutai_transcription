@@ -37,7 +37,7 @@ OPUS_CHUNK_MS = 2000  # How much audio to buffer before sending
 HPB_CONNECT_TIMEOUT = 60
 HPB_PING_TIMEOUT = 120
 HPB_SHUTDOWN_TIMEOUT = 30
-MODAL_CONNECT_TIMEOUT = 30
+MODAL_CONNECT_TIMEOUT = 120  # Allow time for Modal cold start
 CALL_LEAVE_TIMEOUT = 60
 
 # Retry configuration
