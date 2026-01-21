@@ -171,6 +171,11 @@ class ModalTranscriber:
         self._buffer_duration_ms = 0
         self._min_buffer_ms = 200  # Buffer 200ms before sending (reduce latency)
 
+        # Transcript logging (for debugging)
+        self._transcript_buffer: list[str] = []
+        self._last_transcript_log = 0.0
+        self._transcript_log_interval = 5.0  # Log every 5 seconds
+
         logger.info(
             f"Created ModalTranscriber for session {session_id}, language={language}"
         )
@@ -337,10 +342,25 @@ class ModalTranscriber:
 
             if msg_type == "token":
                 text = data.get("text", "")
-                if text.strip():
-                    logger.info(f"Transcription: {text}")
+                if text:
+                    self._transcript_buffer.append(text)
+                    # Log accumulated transcript every N seconds
+                    import time
+                    now = time.time()
+                    if now - self._last_transcript_log >= self._transcript_log_interval:
+                        transcript = "".join(self._transcript_buffer)
+                        if transcript.strip():
+                            logger.info(f"Transcript: {transcript}")
+                        self._transcript_buffer = []
+                        self._last_transcript_log = now
                 return TranscriptionResult(text=text, is_final=False)
             elif msg_type == "vad_end":
+                # Log any remaining transcript on VAD end
+                if self._transcript_buffer:
+                    transcript = "".join(self._transcript_buffer)
+                    if transcript.strip():
+                        logger.info(f"Transcript (final): {transcript}")
+                    self._transcript_buffer = []
                 return TranscriptionResult(text="", is_final=True, is_vad_end=True)
             elif msg_type == "error":
                 logger.error(f"Modal error: {data.get('message')}")
