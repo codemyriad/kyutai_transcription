@@ -50,6 +50,9 @@ jobs:
             -e APP_ID=kyutai_transcription \
             -e APP_VERSION=1.0.0 \
             -e APP_PORT=23000 \
+            -e AA_VERSION=1.0.0 \
+            -e APP_SECRET=test-secret \
+            -e NEXTCLOUD_URL=http://localhost \
             -p 23000:23000 \
             kyutai-transcription:test
 
