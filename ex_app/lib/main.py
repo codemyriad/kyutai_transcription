@@ -71,13 +71,27 @@ app = FastAPI(
 )
 
 # Add Nextcloud AppAPI authentication middleware (exclude endpoints AppAPI calls during setup)
-app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
+app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled", "init"])
 
 
 @app.get("/heartbeat")
 async def heartbeat():
     """Health check endpoint excluded from AppAPI authentication."""
     return {"status": "ok"}
+
+
+@app.post("/init")
+async def init():
+    """Initialization endpoint called by AppAPI after deployment."""
+    logger.info("Init endpoint called")
+    return {}
+
+
+@app.put("/enabled")
+async def set_enabled(enabled: int = 1):
+    """Enable/disable callback from AppAPI."""
+    logger.info(f"App {'enabled' if enabled else 'disabled'} by Nextcloud")
+    return {}
 
 
 @app.exception_handler(TranscriptionProviderException)
