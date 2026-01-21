@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from nc_py_api import NextcloudApp
-from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app
+from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app, set_handlers
 
 from .constants import APP_ID, APP_PORT, APP_VERSION
 from .livetypes import (
@@ -69,6 +69,9 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+
+# Set up Nextcloud AppAPI handlers (adds /heartbeat endpoint)
+set_handlers(app)
 
 # Add Nextcloud AppAPI authentication middleware
 app.add_middleware(AppAPIAuthMiddleware)

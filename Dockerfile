@@ -58,9 +58,9 @@ ENV APP_ID="kyutai_transcription" \
 # Expose the application port
 EXPOSE 23000
 
-# Health check
+# Health check (uses /heartbeat which is excluded from AppAPI auth)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:23000/health || exit 1
+    CMD curl -f http://localhost:23000/heartbeat || exit 1
 
 # Run the application from /app so Python recognizes the package structure
 CMD ["python", "-m", "uvicorn", "ex_app.lib.main:app", "--host", "0.0.0.0", "--port", "23000"]
