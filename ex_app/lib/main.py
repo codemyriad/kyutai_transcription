@@ -133,12 +133,17 @@ async def health():
 
 @app.get("/capabilities")
 async def capabilities():
-    """Return app capabilities for Nextcloud."""
+    """Return app capabilities for Nextcloud.
+
+    Talk looks for 'live_transcription' in features to enable the transcription button.
+    """
     return {
-        "kyutai_transcription": {
+        APP_ID: {
             "version": APP_VERSION,
-            "languages": get_supported_languages(),
-            "features": ["streaming", "vad"],
+            "features": ["live_transcription"],
+            "live_transcription": {
+                "supported_languages": get_supported_languages(),
+            },
         }
     }
 
