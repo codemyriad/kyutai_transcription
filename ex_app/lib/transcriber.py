@@ -73,9 +73,9 @@ class OggOpusEncoder:
             # Create in-memory output
             self._output = io.BytesIO()
             self._container = av.open(self._output, mode='w', format='ogg')
-            self._stream = self._container.add_stream('libopus', rate=self.sample_rate)
-            self._stream.channels = self.channels
-            self._stream.layout = 'mono' if self.channels == 1 else 'stereo'
+            # Set layout which determines channels (channels is read-only in newer PyAV)
+            layout = 'mono' if self.channels == 1 else 'stereo'
+            self._stream = self._container.add_stream('libopus', rate=self.sample_rate, layout=layout)
 
             self._initialized = True
             logger.info(f"Ogg Opus encoder initialized: {self.sample_rate}Hz, {self.channels}ch")
