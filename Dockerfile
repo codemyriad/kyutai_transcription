@@ -49,9 +49,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ex_app/ /app/ex_app/
 COPY appinfo/ /app/appinfo/
 
-# Set working directory to lib for running the app
-WORKDIR /app/ex_app/lib
-
 # Default environment variables
 ENV APP_ID="kyutai_transcription" \
     APP_VERSION="1.0.0" \
@@ -65,5 +62,5 @@ EXPOSE 23000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:23000/health || exit 1
 
-# Run the application
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "23000"]
+# Run the application from /app so Python recognizes the package structure
+CMD ["python", "-m", "uvicorn", "ex_app.lib.main:app", "--host", "0.0.0.0", "--port", "23000"]

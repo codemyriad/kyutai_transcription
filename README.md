@@ -42,7 +42,23 @@ uvx modal deploy src/stt/modal_app.py
 
 ### Step 3: Register the ExApp in Nextcloud
 
-#### Check if AppAPI Deploy Daemon is configured
+#### For Nextcloud AIO (All-in-One)
+
+Nextcloud AIO comes with a pre-configured Docker daemon called `docker_aio`. Register the ExApp from inside the Nextcloud container:
+
+```bash
+docker exec --user www-data -it nextcloud-aio-nextcloud php occ app_api:app:register \
+    kyutai_transcription docker_aio \
+    --info-xml https://raw.githubusercontent.com/codemyriad/kyutai_transcription/main/appinfo/info.xml \
+    --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
+    --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
+    --env "MODAL_WORKSPACE=your-modal-workspace" \
+    --env "MODAL_KEY=your-modal-key" \
+    --env "MODAL_SECRET=your-modal-secret" \
+    --wait-finish
+```
+
+#### For Other Nextcloud Installations
 
 First, check if you already have a Docker deploy daemon registered:
 
@@ -50,28 +66,21 @@ First, check if you already have a Docker deploy daemon registered:
 occ app_api:daemon:list
 ```
 
-If you see a daemon with type `docker-install`, note its name (e.g., `docker_local`) and skip to step 2.
+If you see a daemon with type `docker-install`, note its name and use it in the command below.
 
-If no Docker daemon is configured, register one:
+If no Docker daemon is configured, register one first:
 
 ```bash
-# For Docker socket access (most common setup)
 occ app_api:daemon:register docker_local "Docker Local" \
     docker-install http /var/run/docker.sock http://localhost
-
-# Verify it was created
-occ app_api:daemon:list
 ```
 
-#### Install the ExApp
-
-Register the ExApp with your daemon (replace `docker_local` with your daemon name if different):
+Then register the ExApp (replace `docker_local` with your daemon name if different):
 
 ```bash
 occ app_api:app:register kyutai_transcription docker_local \
     --info-xml https://raw.githubusercontent.com/codemyriad/kyutai_transcription/main/appinfo/info.xml \
-    --env "LT_HPB_URL=wss://your-hpb-domain/standalone-signaling/spreed" \
-    --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
+    --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
     --env "MODAL_KEY=your-modal-key" \
     --env "MODAL_SECRET=your-modal-secret" \
