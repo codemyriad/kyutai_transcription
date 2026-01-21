@@ -19,7 +19,7 @@ class AudioStream:
         """
         self.track = track
         self._running = False
-        self._frame_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=100)
+        self._frame_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=500)
         self._task: Optional[asyncio.Task] = None
         self._sample_rate: Optional[int] = None
         self._channels: Optional[int] = None

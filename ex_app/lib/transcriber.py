@@ -169,7 +169,7 @@ class ModalTranscriber:
         self._encoder = OpusEncoder(KYUTAI_SAMPLE_RATE, 1)
         self._audio_buffer: list[np.ndarray] = []
         self._buffer_duration_ms = 0
-        self._min_buffer_ms = 1000  # Buffer 1 second before sending
+        self._min_buffer_ms = 200  # Buffer 200ms before sending (reduce latency)
 
         logger.info(
             f"Created ModalTranscriber for session {session_id}, language={language}"
