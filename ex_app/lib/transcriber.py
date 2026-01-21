@@ -157,6 +157,7 @@ class ModalTranscriber:
         self._debug_audio_dir: Optional[Path] = None
         self._audio_frame_count = 0
         self._total_audio_bytes = 0
+        self._first_audio_sent = False  # Track if we've logged first audio send
 
         logger.info(
             f"Created ModalTranscriber for session {session_id}, language={language}"
@@ -320,9 +321,14 @@ class ModalTranscriber:
             # Send to Modal
             await self._ws.send(encoded)
 
-            logger.debug(
-                f"Sent {self._buffer_duration_ms:.0f}ms of audio ({len(encoded)} bytes) to Modal"
-            )
+            # Log first audio send at INFO level, rest at DEBUG
+            if not self._first_audio_sent:
+                logger.info(f"First audio sent to Modal ({len(encoded)} bytes)")
+                self._first_audio_sent = True
+            else:
+                logger.debug(
+                    f"Sent {self._buffer_duration_ms:.0f}ms of audio ({len(encoded)} bytes) to Modal"
+                )
 
             # Clear buffer
             self._audio_buffer = []
