@@ -242,18 +242,18 @@ class ModalTranscriber:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         self._debug_audio_dir = Path(f"/tmp/audio_debug/{timestamp}_{self.session_id}")
         self._debug_audio_dir.mkdir(parents=True, exist_ok=True)
-        # Write metadata file for playback
+        # Write metadata file for playback (WebRTC typically delivers stereo)
         metadata_file = self._debug_audio_dir / "README.txt"
         with open(metadata_file, "w") as f:
             f.write(f"Audio capture for session: {self.session_id}\n")
             f.write(f"Timestamp: {timestamp}\n")
             f.write(f"Format: Raw PCM, 16-bit signed little-endian\n")
             f.write(f"Sample rate: {WEBRTC_SAMPLE_RATE} Hz\n")
-            f.write(f"Channels: 1 (mono)\n")
+            f.write(f"Channels: 2 (stereo, WebRTC default)\n")
             f.write(f"\nTo play with ffplay:\n")
-            f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 1 audio_raw.pcm\n")
+            f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 audio_raw.pcm\n")
             f.write(f"\nTo convert to WAV:\n")
-            f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 1 -i audio_raw.pcm audio.wav\n")
+            f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 -i audio_raw.pcm audio.wav\n")
         logger.info(f"Saving debug audio to {self._debug_audio_dir}")
 
         # Connect to Modal first (this can take time for cold start)
@@ -314,6 +314,11 @@ class ModalTranscriber:
 
         # Convert bytes to numpy array (assuming 16-bit PCM)
         audio = np.frombuffer(frame_data, dtype=np.int16)
+
+        # Convert stereo to mono (WebRTC typically delivers stereo)
+        # Interleaved stereo: L R L R L R... -> average channels
+        if len(audio) % 2 == 0:
+            audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
 
         # Resample from WebRTC rate to Kyutai rate
         resampled = self._resampler.resample(audio)
@@ -463,7 +468,8 @@ class ModalTranscriber:
 
         # Log audio capture summary
         if self._debug_audio_dir and self._audio_frame_count > 0:
-            duration_sec = self._total_audio_bytes / (WEBRTC_SAMPLE_RATE * 2)  # 16-bit = 2 bytes/sample
+            # Stereo 16-bit = 4 bytes per sample (2 channels × 2 bytes)
+            duration_sec = self._total_audio_bytes / (WEBRTC_SAMPLE_RATE * 4)
             logger.info(
                 f"Audio capture complete: {self._audio_frame_count} frames, "
                 f"{self._total_audio_bytes / 1024:.1f} KB, ~{duration_sec:.1f}s of audio. "
