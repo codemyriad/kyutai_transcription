@@ -48,20 +48,6 @@ See the README for detailed setup instructions.
             <image>codemyriad/kyutai-transcription</image>
             <image-tag>latest</image-tag>
         </docker-install>
-        <protocol>http</protocol>
-        <system>false</system>
-        <routes>
-            <route>
-                <url>.*</url>
-                <verb>GET,POST,PUT,DELETE</verb>
-                <access_level>USER</access_level>
-                <headers_to_exclude>[]</headers_to_exclude>
-            </route>
-        </routes>
-        <scopes>
-            <value>TALK</value>
-            <value>TALK_BOT</value>
-        </scopes>
         <environment-variables>
             <variable>
                 <name>LT_HPB_URL</name>
