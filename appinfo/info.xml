@@ -62,32 +62,32 @@ See the README for detailed setup instructions.
             <value>TALK</value>
             <value>TALK_BOT</value>
         </scopes>
-        <environment>
+        <environment-variables>
             <variable>
                 <name>LT_HPB_URL</name>
-                <display_name>HPB WebSocket URL</display_name>
+                <display-name>HPB WebSocket URL</display-name>
                 <description>WebSocket URL to the signaling server (wss://your-domain/standalone-signaling/spreed)</description>
             </variable>
             <variable>
                 <name>LT_INTERNAL_SECRET</name>
-                <display_name>HPB Internal Secret</display_name>
+                <display-name>HPB Internal Secret</display-name>
                 <description>INTERNAL_SECRET from the HPB configuration</description>
             </variable>
             <variable>
                 <name>MODAL_WORKSPACE</name>
-                <display_name>Modal Workspace</display_name>
+                <display-name>Modal Workspace</display-name>
                 <description>Your Modal workspace name (from the Modal dashboard URL)</description>
             </variable>
             <variable>
                 <name>MODAL_KEY</name>
-                <display_name>Modal Proxy Key</display_name>
+                <display-name>Modal Proxy Key</display-name>
                 <description>Modal proxy authentication key (from Modal workspace settings)</description>
             </variable>
             <variable>
                 <name>MODAL_SECRET</name>
-                <display_name>Modal Proxy Secret</display_name>
+                <display-name>Modal Proxy Secret</display-name>
                 <description>Modal proxy authentication secret (from Modal workspace settings)</description>
             </variable>
-        </environment>
+        </environment-variables>
     </external-app>
 </info>
