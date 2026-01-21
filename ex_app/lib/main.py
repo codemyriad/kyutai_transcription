@@ -70,8 +70,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add Nextcloud AppAPI authentication middleware (exclude /heartbeat from auth)
-app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat"])
+# Add Nextcloud AppAPI authentication middleware (exclude endpoints AppAPI calls during setup)
+app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
 
 
 @app.get("/heartbeat")
