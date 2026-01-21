@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>kyutai_transcription</id>
+    <name>Kyutai Live Transcription</name>
+    <summary>Live transcription for Nextcloud Talk using Kyutai STT on Modal</summary>
+    <description><![CDATA[
+# Kyutai Live Transcription
+
+Real-time transcription for Nextcloud Talk video calls using Kyutai's streaming speech-to-text model deployed on Modal.com.
+
+## Features
+
+- **Low latency**: ~0.5 second first-token latency with streaming transcription
+- **GPU-accelerated**: Runs on Modal.com's GPU infrastructure
+- **Automatic scaling**: Scales from zero with Modal's serverless architecture
+- **Cost-effective**: Pay only for what you use with per-second billing
+
+## Requirements
+
+- Nextcloud 30+
+- Talk 18+ with High-Performance Backend
+- Modal.com account with deployed Kyutai STT service
+
+## Configuration
+
+You need to provide the following environment variables:
+- `MODAL_KEY`: Your Modal proxy authentication key
+- `MODAL_SECRET`: Your Modal proxy authentication secret
+- `MODAL_WORKSPACE`: Your Modal workspace name
+
+See the README for detailed setup instructions.
+    ]]></description>
+    <version>1.0.0</version>
+    <licence>agpl</licence>
+    <author>Silvio</author>
+    <namespace>KyutaiTranscription</namespace>
+    <category>multimedia</category>
+    <bugs>https://github.com/codemyriad/kyutai_transcription/issues</bugs>
+    <repository>https://github.com/codemyriad/kyutai_transcription</repository>
+    <dependencies>
+        <nextcloud min-version="30" max-version="34"/>
+    </dependencies>
+
+    <external-app>
+        <docker-install>
+            <registry>ghcr.io</registry>
+            <image>codemyriad/kyutai-transcription</image>
+            <image-tag>latest</image-tag>
+        </docker-install>
+        <protocol>http</protocol>
+        <system>false</system>
+        <routes>
+            <route>
+                <url>.*</url>
+                <verb>GET,POST,PUT,DELETE</verb>
+                <access_level>USER</access_level>
+                <headers_to_exclude>[]</headers_to_exclude>
+            </route>
+        </routes>
+        <scopes>
+            <value>TALK</value>
+            <value>TALK_BOT</value>
+        </scopes>
+        <environment>
+            <variable>
+                <name>LT_HPB_URL</name>
+                <display_name>HPB WebSocket URL</display_name>
+                <description>WebSocket URL to the signaling server (wss://your-domain/standalone-signaling/spreed)</description>
+            </variable>
+            <variable>
+                <name>LT_INTERNAL_SECRET</name>
+                <display_name>HPB Internal Secret</display_name>
+                <description>INTERNAL_SECRET from the HPB configuration</description>
+            </variable>
+            <variable>
+                <name>MODAL_WORKSPACE</name>
+                <display_name>Modal Workspace</display_name>
+                <description>Your Modal workspace name (from the Modal dashboard URL)</description>
+            </variable>
+            <variable>
+                <name>MODAL_KEY</name>
+                <display_name>Modal Proxy Key</display_name>
+                <description>Modal proxy authentication key (from Modal workspace settings)</description>
+            </variable>
+            <variable>
+                <name>MODAL_SECRET</name>
+                <display_name>Modal Proxy Secret</display_name>
+                <description>Modal proxy authentication secret (from Modal workspace settings)</description>
+            </variable>
+        </environment>
+    </external-app>
+</info>

@@ -1,4 +1,283 @@
-# Live transcriptions for nextcloud using Kyutai
+# Kyutai Live Transcription for Nextcloud Talk
 
-This nextcloud app is an alternative to live_transcriptions that uses an external URL to do transcriptions.
-It's meant to use kyutai STT deployed on modal using https://github.com/codemyriad/kyutai_modal
+Real-time live transcription for Nextcloud Talk video calls using [Kyutai's streaming speech-to-text model](https://github.com/kyutai-labs/moshi) deployed on [Modal.com](https://modal.com).
+
+## Features
+
+- **Low latency**: ~0.5 second first-token latency with streaming transcription
+- **GPU-accelerated**: Runs on Modal.com's GPU infrastructure
+- **Automatic scaling**: Scales from zero with Modal's serverless architecture
+- **Cost-effective**: Pay only for what you use with per-second billing
+- **Multi-language**: Supports English and French
+
+## Prerequisites
+
+1. **Nextcloud 30+** with the following:
+   - Talk app (spreed) 18+
+   - High-Performance Backend (HPB) configured
+   - AppAPI app installed
+
+2. **Modal.com account** with:
+   - Kyutai STT service deployed (see [kyutai_modal](https://github.com/codemyriad/kyutai_modal))
+   - Proxy authentication token created
+
+## Installation
+
+### Step 1: Deploy Kyutai STT on Modal
+
+First, deploy the Kyutai STT service on Modal. See the [kyutai_modal repository](https://github.com/codemyriad/kyutai_modal) for instructions.
+
+```bash
+git clone https://github.com/codemyriad/kyutai_modal.git
+cd kyutai_modal
+uvx modal deploy src/stt/modal_app.py
+```
+
+### Step 2: Get Modal Credentials
+
+1. Go to your [Modal dashboard](https://modal.com/settings)
+2. Note your **workspace name** from the URL (e.g., `user-myworkspace`)
+3. Go to **Settings** → **Proxy Auth Tokens** → **Create Token**
+4. Save the generated **key** and **secret**
+
+### Step 3: Register the ExApp in Nextcloud
+
+#### Option A: Using Docker Deploy Daemon (Recommended)
+
+1. Make sure you have a Docker deploy daemon registered in AppAPI:
+
+```bash
+occ app_api:daemon:register docker_daemon "Docker Daemon" \
+    docker-install http /var/run/docker.sock http://localhost
+```
+
+2. Register the ExApp:
+
+```bash
+occ app_api:app:register kyutai_transcription docker_daemon \
+    --info-xml https://raw.githubusercontent.com/silvio/nc_kyutai_live_transcriptions/main/appinfo/info.xml \
+    --env "LT_HPB_URL=wss://your-hpb-domain/standalone-signaling/spreed" \
+    --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
+    --env "MODAL_WORKSPACE=your-modal-workspace" \
+    --env "MODAL_KEY=your-modal-key" \
+    --env "MODAL_SECRET=your-modal-secret" \
+    --wait-finish
+```
+
+#### Option B: Manual Deployment
+
+1. Pull the Docker image:
+
+```bash
+docker pull ghcr.io/codemyriad/kyutai-transcription:latest
+```
+
+2. Run the container:
+
+```bash
+docker run -d \
+    --name kyutai-transcription \
+    -p 23000:23000 \
+    -e APP_ID=kyutai_transcription \
+    -e APP_VERSION=1.0.0 \
+    -e APP_PORT=23000 \
+    -e LT_HPB_URL=wss://your-hpb-domain/standalone-signaling/spreed \
+    -e LT_INTERNAL_SECRET=your-hpb-internal-secret \
+    -e MODAL_WORKSPACE=your-modal-workspace \
+    -e MODAL_KEY=your-modal-key \
+    -e MODAL_SECRET=your-modal-secret \
+    ghcr.io/codemyriad/kyutai-transcription:latest
+```
+
+3. Register with AppAPI manually:
+
+```bash
+occ app_api:daemon:register manual_install "Manual Install" manual-install http localhost http://localhost
+
+occ app_api:app:register kyutai_transcription manual_install \
+    --json-info '{
+        "id": "kyutai_transcription",
+        "name": "Kyutai Live Transcription",
+        "daemon_config_name": "manual_install",
+        "version": "1.0.0",
+        "secret": "your-app-secret",
+        "port": 23000,
+        "scopes": ["TALK", "TALK_BOT"]
+    }' \
+    --wait-finish
+```
+
+## Configuration
+
+### Required Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `LT_HPB_URL` | WebSocket URL to HPB signaling server | `wss://nextcloud.example.com/standalone-signaling/spreed` |
+| `LT_INTERNAL_SECRET` | HPB internal secret for authentication | `your-24-char-secret` |
+| `MODAL_WORKSPACE` | Your Modal workspace name | `user-myworkspace` |
+| `MODAL_KEY` | Modal proxy authentication key | `key_...` |
+| `MODAL_SECRET` | Modal proxy authentication secret | `secret_...` |
+
+### Optional Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `APP_ID` | Application identifier | `kyutai_transcription` |
+| `APP_VERSION` | Application version | `1.0.0` |
+| `APP_PORT` | Port to listen on | `23000` |
+| `SKIP_CERT_VERIFY` | Skip SSL certificate verification | `false` |
+
+## Usage
+
+Once installed, the transcription feature will be available in Nextcloud Talk:
+
+1. Join a video call in Nextcloud Talk
+2. Click on the **CC** (closed captions) button in the call controls
+3. Select your preferred language
+4. Transcriptions will appear in real-time as participants speak
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Nextcloud Talk UI                             │
+│                  (Enable transcription)                          │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ HTTP API
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Kyutai Transcription ExApp                          │
+│                                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                  FastAPI Application                     │   │
+│   │    /api/v1/call/transcribe    /api/v1/call/set-language │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                         │                                        │
+│   ┌─────────────────────▼─────────────────────────────────────┐ │
+│   │                   SpreedClient                             │ │
+│   │    - Connects to HPB via WebSocket                        │ │
+│   │    - Receives audio via WebRTC                            │ │
+│   │    - Manages peer connections                             │ │
+│   └─────────────────────┬─────────────────────────────────────┘ │
+│                         │ Audio                                  │
+│   ┌─────────────────────▼─────────────────────────────────────┐ │
+│   │                ModalTranscriber                            │ │
+│   │    - Resamples audio (48kHz → 24kHz)                      │ │
+│   │    - Encodes to Opus                                      │ │
+│   │    - Sends to Modal via WebSocket                         │ │
+│   └─────────────────────┬─────────────────────────────────────┘ │
+└─────────────────────────┼───────────────────────────────────────┘
+                          │ wss://
+                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Modal.com (GPU Cloud)                           │
+│                                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │               Kyutai STT Service                         │   │
+│   │    - Decodes Opus audio                                  │   │
+│   │    - Runs Moshi streaming inference                      │   │
+│   │    - Returns transcription tokens                        │   │
+│   └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/enabled` | GET | Check if app is configured |
+| `/capabilities` | GET | Get app capabilities |
+| `/api/v1/languages` | GET | Get supported languages |
+| `/api/v1/call/transcribe` | POST | Start/stop transcription |
+| `/api/v1/call/set-language` | POST | Change transcription language |
+| `/api/v1/call/leave` | POST | Leave a call |
+| `/api/v1/status` | GET | Get service status |
+
+## Development
+
+### Local Development
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/codemyriad/kyutai_transcription.git
+cd nc_kyutai_live_transcriptions
+```
+
+2. Create a virtual environment:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+```
+
+3. Set environment variables:
+
+```bash
+export LT_HPB_URL=wss://your-hpb/spreed
+export LT_INTERNAL_SECRET=your-secret
+export MODAL_WORKSPACE=your-workspace
+export MODAL_KEY=your-key
+export MODAL_SECRET=your-secret
+```
+
+4. Run the application:
+
+```bash
+cd ex_app/lib
+python -m uvicorn main:app --reload --port 23000
+```
+
+### Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+### Building Docker Image
+
+```bash
+docker build -t kyutai-transcription:dev .
+```
+
+## Troubleshooting
+
+### No transcriptions appearing
+
+1. Check that HPB is properly configured and accessible
+2. Verify Modal credentials are correct
+3. Check the container logs: `docker logs kyutai-transcription`
+4. Verify the HPB internal secret matches
+
+### "Failed to connect to HPB"
+
+- Ensure `LT_HPB_URL` is correct (should end with `/spreed`)
+- Check that `LT_INTERNAL_SECRET` matches the HPB configuration
+- If using self-signed certificates, set `SKIP_CERT_VERIFY=true`
+
+### "Modal not configured"
+
+- Ensure all three Modal environment variables are set:
+  - `MODAL_WORKSPACE`
+  - `MODAL_KEY`
+  - `MODAL_SECRET`
+- Verify the Kyutai STT service is deployed on Modal
+
+### High latency
+
+- Check Modal GPU selection (A10G or A100 recommended)
+- Ensure good network connectivity to Modal
+- Monitor Modal logs for any issues
+
+## License
+
+AGPL-3.0-or-later
+
+## Credits
+
+- [Kyutai](https://kyutai.org/) for the Moshi streaming STT model
+- [Modal](https://modal.com/) for the serverless GPU infrastructure
+- [Nextcloud](https://nextcloud.com/) for the collaboration platform
