@@ -77,7 +77,7 @@ app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
 @app.get("/heartbeat")
 async def heartbeat():
     """Health check endpoint excluded from AppAPI authentication."""
-    return ""
+    return {"status": "ok"}
 
 
 @app.exception_handler(TranscriptionProviderException)
