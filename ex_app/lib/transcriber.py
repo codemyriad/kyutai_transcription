@@ -45,111 +45,32 @@ class TranscriptionResult:
     is_vad_end: bool = False
 
 
-class OggOpusEncoder:
-    """Encoder that produces Ogg Opus format using PyAV.
+class RawPCMEncoder:
+    """Simple passthrough encoder that sends raw PCM.
 
-    This produces a proper Ogg container that sphn.read_opus_bytes() can decode.
-    The receiver accumulates all bytes, so we only send new bytes each time.
+    Format: 16-bit signed little-endian, mono, at the target sample rate.
+    The Modal server should be configured to accept this format.
     """
 
     def __init__(self, sample_rate: int = KYUTAI_SAMPLE_RATE, channels: int = 1):
         self.sample_rate = sample_rate
         self.channels = channels
-        self._container = None
-        self._stream = None
-        self._output = None
-        self._initialized = False
-        self._pts = 0
-        self._bytes_sent = 0  # Track how many bytes we've already returned
-
-    def _ensure_encoder(self):
-        """Lazily initialize the Ogg Opus encoder."""
-        if self._initialized:
-            return True
-
-        try:
-            import av
-
-            # Create in-memory output
-            self._output = io.BytesIO()
-            self._container = av.open(self._output, mode='w', format='ogg')
-            # Set layout which determines channels (channels is read-only in newer PyAV)
-            layout = 'mono' if self.channels == 1 else 'stereo'
-            self._stream = self._container.add_stream('libopus', rate=self.sample_rate, layout=layout)
-
-            self._initialized = True
-            logger.info(f"Ogg Opus encoder initialized: {self.sample_rate}Hz, {self.channels}ch")
-            return True
-        except ImportError as e:
-            logger.warning(f"PyAV not available ({e}), cannot encode Ogg Opus")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to initialize Ogg Opus encoder: {e}")
-            return False
+        logger.info(f"Raw PCM encoder: {self.sample_rate}Hz, {self.channels}ch, s16le")
 
     def encode(self, pcm_data: np.ndarray) -> bytes:
-        """Encode PCM data to Ogg Opus format.
+        """Pass through PCM data as raw bytes.
 
         Args:
             pcm_data: PCM audio data as int16 numpy array
 
         Returns:
-            New Ogg Opus encoded audio bytes (only bytes not yet returned)
+            Raw PCM bytes (s16le format)
         """
-        if not self._ensure_encoder():
-            # Fallback: send raw PCM
-            return pcm_data.tobytes()
-
-        try:
-            import av
-
-            # Convert int16 to the format PyAV expects
-            frame = av.AudioFrame.from_ndarray(
-                pcm_data.reshape(1, -1),  # Shape: (channels, samples)
-                format='s16',
-                layout='mono' if self.channels == 1 else 'stereo'
-            )
-            frame.sample_rate = self.sample_rate
-            frame.pts = self._pts
-            self._pts += len(pcm_data)
-
-            # Encode frame
-            for packet in self._stream.encode(frame):
-                self._container.mux(packet)
-
-            # Get only the NEW bytes (not yet sent)
-            current_size = self._output.tell()
-            if current_size > self._bytes_sent:
-                self._output.seek(self._bytes_sent)
-                new_data = self._output.read()
-                self._bytes_sent = current_size
-                return new_data
-            return b""
-        except Exception as e:
-            logger.error(f"Error encoding audio: {e}")
-            return pcm_data.tobytes()
+        return pcm_data.astype(np.int16).tobytes()
 
     def flush(self) -> bytes:
-        """Flush any remaining data and finalize the stream."""
-        if not self._initialized or not self._container:
-            return b""
-
-        try:
-            # Flush encoder
-            for packet in self._stream.encode(None):
-                self._container.mux(packet)
-
-            # Get only new bytes
-            current_size = self._output.tell()
-            if current_size > self._bytes_sent:
-                self._output.seek(self._bytes_sent)
-                new_data = self._output.read()
-                self._bytes_sent = current_size
-                return new_data
-            return b""
-        except Exception as e:
-            logger.error(f"Error flushing encoder: {e}")
-            return b""
+        """Nothing to flush for raw PCM."""
+        return b""
 
 
 class AudioResampler:
@@ -220,7 +141,7 @@ class ModalTranscriber:
 
         # Audio processing
         self._resampler = AudioResampler(WEBRTC_SAMPLE_RATE, KYUTAI_SAMPLE_RATE)
-        self._encoder = OggOpusEncoder(KYUTAI_SAMPLE_RATE, 1)
+        self._encoder = RawPCMEncoder(KYUTAI_SAMPLE_RATE, 1)
         self._audio_buffer: list[np.ndarray] = []
         self._buffer_duration_ms = 0
         self._min_buffer_ms = 200  # Buffer 200ms before sending (reduce latency)
