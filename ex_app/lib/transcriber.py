@@ -45,64 +45,111 @@ class TranscriptionResult:
     is_vad_end: bool = False
 
 
-class OpusEncoder:
-    """Simple Opus encoder wrapper using the opuslib library."""
+class OggOpusEncoder:
+    """Encoder that produces Ogg Opus format using PyAV.
+
+    This produces a proper Ogg container that sphn.read_opus_bytes() can decode.
+    The receiver accumulates all bytes, so we only send new bytes each time.
+    """
 
     def __init__(self, sample_rate: int = KYUTAI_SAMPLE_RATE, channels: int = 1):
         self.sample_rate = sample_rate
         self.channels = channels
-        self._encoder = None
-        self._buffer = io.BytesIO()
+        self._container = None
+        self._stream = None
+        self._output = None
+        self._initialized = False
+        self._pts = 0
+        self._bytes_sent = 0  # Track how many bytes we've already returned
 
     def _ensure_encoder(self):
-        """Lazily initialize encoder."""
-        if self._encoder is None:
-            try:
-                import opuslib
+        """Lazily initialize the Ogg Opus encoder."""
+        if self._initialized:
+            return True
 
-                self._encoder = opuslib.Encoder(
-                    self.sample_rate,
-                    self.channels,
-                    opuslib.APPLICATION_VOIP,
-                )
-                logger.info(f"Opus encoder initialized: {self.sample_rate}Hz, {self.channels}ch")
-            except ImportError as e:
-                logger.warning(f"opuslib not available ({e}), using raw audio fallback")
-                self._encoder = False
-            except Exception as e:
-                logger.error(f"Failed to initialize Opus encoder: {e}")
-                self._encoder = False
+        try:
+            import av
+
+            # Create in-memory output
+            self._output = io.BytesIO()
+            self._container = av.open(self._output, mode='w', format='ogg')
+            self._stream = self._container.add_stream('libopus', rate=self.sample_rate)
+            self._stream.channels = self.channels
+            self._stream.layout = 'mono' if self.channels == 1 else 'stereo'
+
+            self._initialized = True
+            logger.info(f"Ogg Opus encoder initialized: {self.sample_rate}Hz, {self.channels}ch")
+            return True
+        except ImportError as e:
+            logger.warning(f"PyAV not available ({e}), cannot encode Ogg Opus")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to initialize Ogg Opus encoder: {e}")
+            return False
 
     def encode(self, pcm_data: np.ndarray) -> bytes:
-        """Encode PCM data to Opus format.
+        """Encode PCM data to Ogg Opus format.
 
         Args:
             pcm_data: PCM audio data as int16 numpy array
 
         Returns:
-            Opus-encoded audio bytes
+            New Ogg Opus encoded audio bytes (only bytes not yet returned)
         """
-        self._ensure_encoder()
-
-        if self._encoder is False:
-            # Fallback: send raw PCM (server may handle it)
+        if not self._ensure_encoder():
+            # Fallback: send raw PCM
             return pcm_data.tobytes()
 
-        # Opus frame sizes: 2.5, 5, 10, 20, 40, 60 ms
-        # At 24kHz, 40ms = 960 samples
-        frame_size = 960
-        encoded_frames = []
+        try:
+            import av
 
-        for i in range(0, len(pcm_data), frame_size):
-            frame = pcm_data[i : i + frame_size]
-            if len(frame) < frame_size:
-                # Pad with zeros if needed
-                frame = np.pad(frame, (0, frame_size - len(frame)))
+            # Convert int16 to the format PyAV expects
+            frame = av.AudioFrame.from_ndarray(
+                pcm_data.reshape(1, -1),  # Shape: (channels, samples)
+                format='s16',
+                layout='mono' if self.channels == 1 else 'stereo'
+            )
+            frame.sample_rate = self.sample_rate
+            frame.pts = self._pts
+            self._pts += len(pcm_data)
 
-            encoded = self._encoder.encode(frame.tobytes(), frame_size)
-            encoded_frames.append(encoded)
+            # Encode frame
+            for packet in self._stream.encode(frame):
+                self._container.mux(packet)
 
-        return b"".join(encoded_frames)
+            # Get only the NEW bytes (not yet sent)
+            current_size = self._output.tell()
+            if current_size > self._bytes_sent:
+                self._output.seek(self._bytes_sent)
+                new_data = self._output.read()
+                self._bytes_sent = current_size
+                return new_data
+            return b""
+        except Exception as e:
+            logger.error(f"Error encoding audio: {e}")
+            return pcm_data.tobytes()
+
+    def flush(self) -> bytes:
+        """Flush any remaining data and finalize the stream."""
+        if not self._initialized or not self._container:
+            return b""
+
+        try:
+            # Flush encoder
+            for packet in self._stream.encode(None):
+                self._container.mux(packet)
+
+            # Get only new bytes
+            current_size = self._output.tell()
+            if current_size > self._bytes_sent:
+                self._output.seek(self._bytes_sent)
+                new_data = self._output.read()
+                self._bytes_sent = current_size
+                return new_data
+            return b""
+        except Exception as e:
+            logger.error(f"Error flushing encoder: {e}")
+            return b""
 
 
 class AudioResampler:
@@ -173,7 +220,7 @@ class ModalTranscriber:
 
         # Audio processing
         self._resampler = AudioResampler(WEBRTC_SAMPLE_RATE, KYUTAI_SAMPLE_RATE)
-        self._encoder = OpusEncoder(KYUTAI_SAMPLE_RATE, 1)
+        self._encoder = OggOpusEncoder(KYUTAI_SAMPLE_RATE, 1)
         self._audio_buffer: list[np.ndarray] = []
         self._buffer_duration_ms = 0
         self._min_buffer_ms = 200  # Buffer 200ms before sending (reduce latency)
