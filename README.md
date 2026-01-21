@@ -81,6 +81,7 @@ Then register the ExApp (replace `docker_local` with your daemon name if differe
 occ app_api:app:register kyutai_transcription docker_local \
     --info-xml https://raw.githubusercontent.com/codemyriad/kyutai_transcription/main/appinfo/info.xml \
     --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
+    --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
     --env "MODAL_KEY=your-modal-key" \
     --env "MODAL_SECRET=your-modal-secret" \
