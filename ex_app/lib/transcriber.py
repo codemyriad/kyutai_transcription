@@ -200,6 +200,7 @@ class ModalTranscriber:
                 websockets.connect(
                     self.url,
                     additional_headers=self._get_headers(),
+                    open_timeout=MODAL_CONNECT_TIMEOUT,
                     ping_interval=30,
                     ping_timeout=10,
                     max_size=None,
