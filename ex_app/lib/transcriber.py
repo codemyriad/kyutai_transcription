@@ -4,6 +4,9 @@ import asyncio
 import logging
 import struct
 import io
+import os
+import time
+from pathlib import Path
 from typing import Optional, AsyncGenerator, Protocol
 from dataclasses import dataclass
 
@@ -176,6 +179,11 @@ class ModalTranscriber:
         self._last_transcript_log = 0.0
         self._transcript_log_interval = 5.0  # Log every 5 seconds
 
+        # Audio capture for debugging
+        self._debug_audio_dir: Optional[Path] = None
+        self._audio_frame_count = 0
+        self._total_audio_bytes = 0
+
         logger.info(
             f"Created ModalTranscriber for session {session_id}, language={language}"
         )
@@ -230,6 +238,24 @@ class ModalTranscriber:
             logger.warning("Transcriber already running")
             return
 
+        # Create debug audio directory
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        self._debug_audio_dir = Path(f"/tmp/audio_debug/{timestamp}_{self.session_id}")
+        self._debug_audio_dir.mkdir(parents=True, exist_ok=True)
+        # Write metadata file for playback
+        metadata_file = self._debug_audio_dir / "README.txt"
+        with open(metadata_file, "w") as f:
+            f.write(f"Audio capture for session: {self.session_id}\n")
+            f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"Format: Raw PCM, 16-bit signed little-endian\n")
+            f.write(f"Sample rate: {WEBRTC_SAMPLE_RATE} Hz\n")
+            f.write(f"Channels: 1 (mono)\n")
+            f.write(f"\nTo play with ffplay:\n")
+            f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 1 audio_raw.pcm\n")
+            f.write(f"\nTo convert to WAV:\n")
+            f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 1 -i audio_raw.pcm audio.wav\n")
+        logger.info(f"Saving debug audio to {self._debug_audio_dir}")
+
         # Connect to Modal first (this can take time for cold start)
         await self.connect()
 
@@ -270,6 +296,21 @@ class ModalTranscriber:
         """
         if not self._ws:
             return
+
+        # Save raw audio for debugging
+        if self._debug_audio_dir:
+            self._audio_frame_count += 1
+            self._total_audio_bytes += len(frame_data)
+            # Save every frame to a file (append mode for efficiency)
+            raw_file = self._debug_audio_dir / "audio_raw.pcm"
+            with open(raw_file, "ab") as f:
+                f.write(frame_data)
+            # Log progress every 100 frames
+            if self._audio_frame_count % 100 == 0:
+                logger.info(
+                    f"Audio capture: {self._audio_frame_count} frames, "
+                    f"{self._total_audio_bytes / 1024:.1f} KB total"
+                )
 
         # Convert bytes to numpy array (assuming 16-bit PCM)
         audio = np.frombuffer(frame_data, dtype=np.int16)
@@ -419,6 +460,15 @@ class ModalTranscriber:
         if self._ws:
             await self._ws.close()
             self._ws = None
+
+        # Log audio capture summary
+        if self._debug_audio_dir and self._audio_frame_count > 0:
+            duration_sec = self._total_audio_bytes / (WEBRTC_SAMPLE_RATE * 2)  # 16-bit = 2 bytes/sample
+            logger.info(
+                f"Audio capture complete: {self._audio_frame_count} frames, "
+                f"{self._total_audio_bytes / 1024:.1f} KB, ~{duration_sec:.1f}s of audio. "
+                f"Saved to {self._debug_audio_dir}"
+            )
 
         logger.info(f"Transcriber stopped for session {self.session_id}")
 
