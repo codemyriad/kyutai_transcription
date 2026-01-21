@@ -4,7 +4,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from nc_py_api import NextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app, nc_app
@@ -81,13 +81,18 @@ async def heartbeat():
     return {"status": "ok"}
 
 
-@app.post("/init")
-async def init(nc: NextcloudApp = Depends(nc_app)):
-    """Initialization endpoint called by AppAPI after deployment."""
-    logger.info("Init endpoint called")
-    # Signal initialization complete to AppAPI
+def _finish_init(nc: NextcloudApp):
+    """Background task to signal init completion."""
+    logger.info("Setting init status to 100%")
     nc.set_init_status(100)
-    logger.info("Init complete, status set to 100%")
+    logger.info("Init complete")
+
+
+@app.post("/init")
+async def init(background_tasks: BackgroundTasks, nc: NextcloudApp = Depends(nc_app)):
+    """Initialization endpoint called by AppAPI after deployment."""
+    logger.info("Init endpoint called, scheduling completion in background")
+    background_tasks.add_task(_finish_init, nc)
     return {}
 
 
