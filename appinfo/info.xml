@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
-    <id>kyutai_transcription</id>
+    <id>live_transcription</id>
     <name>Kyutai Live Transcription</name>
     <summary>Live transcription for Nextcloud Talk using Kyutai STT on Modal</summary>
     <description><![CDATA[
@@ -45,7 +45,7 @@ See the README for detailed setup instructions.
     <external-app>
         <docker-install>
             <registry>ghcr.io</registry>
-            <image>codemyriad/kyutai-transcription</image>
+            <image>codemyriad/live_transcription</image>
             <image-tag>latest</image-tag>
         </docker-install>
         <environment-variables>

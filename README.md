@@ -10,6 +10,15 @@ Real-time live transcription for Nextcloud Talk video calls using [Kyutai's stre
 - **Cost-effective**: Pay only for what you use with per-second billing
 - **Multi-language**: Supports English and French
 
+## Important: App ID Requirement
+
+This app **must** use the app ID `live_transcription` because Nextcloud Talk is hardcoded to look for an ExApp with exactly that ID when enabling the CC (closed captions) button. We would prefer to use a unique, non-conflicting name like `live_transcription`, but Talk's `LiveTranscriptionService` specifically queries for `getExApp('live_transcription')`.
+
+**This means:**
+- This app cannot be installed alongside Nextcloud's official [live_transcription](https://github.com/nextcloud/live_transcription) app
+- You must choose one or the other as your live transcription provider
+- If you have the official app installed, unregister it first before installing this one
+
 ## Prerequisites
 
 1. **Nextcloud 30+** with the following:
@@ -48,8 +57,8 @@ Nextcloud AIO comes with a pre-configured Docker daemon called `docker_aio`. Reg
 
 ```bash
 docker exec --user www-data -it nextcloud-aio-nextcloud php occ app_api:app:register \
-    kyutai_transcription docker_aio \
-    --info-xml https://raw.githubusercontent.com/codemyriad/kyutai_transcription/main/appinfo/info.xml \
+    live_transcription docker_aio \
+    --info-xml https://raw.githubusercontent.com/codemyriad/live_transcription/main/appinfo/info.xml \
     --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
     --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
@@ -78,8 +87,8 @@ occ app_api:daemon:register docker_local "Docker Local" \
 Then register the ExApp (replace `docker_local` with your daemon name if different):
 
 ```bash
-occ app_api:app:register kyutai_transcription docker_local \
-    --info-xml https://raw.githubusercontent.com/codemyriad/kyutai_transcription/main/appinfo/info.xml \
+occ app_api:app:register live_transcription docker_local \
+    --info-xml https://raw.githubusercontent.com/codemyriad/live_transcription/main/appinfo/info.xml \
     --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
     --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
@@ -110,7 +119,7 @@ Once this app is published to the Nextcloud App Store, you'll be able to install
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `APP_ID` | Application identifier | `kyutai_transcription` |
+| `APP_ID` | Application identifier (must be `live_transcription`) | `live_transcription` |
 | `APP_VERSION` | Application version | `1.0.0` |
 | `APP_PORT` | Port to listen on | `23000` |
 | `SKIP_CERT_VERIFY` | Skip SSL certificate verification | `false` |
@@ -189,7 +198,7 @@ Once installed, the transcription feature will be available in Nextcloud Talk:
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/codemyriad/kyutai_transcription.git
+git clone https://github.com/codemyriad/live_transcription.git
 cd nc_kyutai_live_transcriptions
 ```
 
@@ -227,7 +236,7 @@ pytest tests/ -v
 ### Building Docker Image
 
 ```bash
-docker build -t kyutai-transcription:dev .
+docker build -t live_transcription:dev .
 ```
 
 ## Troubleshooting
@@ -236,7 +245,7 @@ docker build -t kyutai-transcription:dev .
 
 1. Check that HPB is properly configured and accessible
 2. Verify Modal credentials are correct
-3. Check the container logs: `docker logs kyutai-transcription`
+3. Check the container logs: `docker logs nc_app_live_transcription`
 4. Verify the HPB internal secret matches
 
 ### "Failed to connect to HPB"

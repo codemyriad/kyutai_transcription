@@ -5,7 +5,7 @@ This document explains how the Kyutai Transcription ExApp is built and how it in
 ## Directory Layout
 
 ```
-kyutai_transcription/
+live_transcription/
 ├── appinfo/
 │   └── info.xml              # ExApp metadata for Nextcloud AppAPI
 ├── ex_app/
@@ -25,6 +25,16 @@ kyutai_transcription/
 ├── pyproject.toml            # Python package configuration
 └── README.md                 # User documentation
 ```
+
+## Why the App ID Must Be `live_transcription`
+
+Nextcloud Talk is **hardcoded** to look for an ExApp with the exact ID `live_transcription`. In `lib/Service/LiveTranscriptionService.php`:
+
+```php
+$exApp = $appApiPublicFunctions->getExApp('live_transcription');
+```
+
+Talk checks this to determine whether to expose the `config.call.live-transcription` capability, which controls whether the CC button appears in the UI. We would prefer a unique name like `kyutai_transcription` to avoid conflicts, but this is not possible without modifying Talk itself.
 
 ## How It Works
 
@@ -55,7 +65,7 @@ For Talk to show the transcription button, `/capabilities` must return:
 
 ```python
 {
-    "kyutai_transcription": {
+    "live_transcription": {
         "version": "1.0.0",
         "features": ["live_transcription"],  # Required!
         "live_transcription": {

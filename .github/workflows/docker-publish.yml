@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: codemyriad/kyutai-transcription
+  IMAGE_NAME: codemyriad/live_transcription
 
 jobs:
   test:
@@ -42,19 +42,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t kyutai-transcription:test .
+        run: docker build -t live_transcription:test .
 
       - name: Start container
         run: |
           docker run -d --name test-container \
-            -e APP_ID=kyutai_transcription \
+            -e APP_ID=live_transcription \
             -e APP_VERSION=1.0.0 \
             -e APP_PORT=23000 \
             -e AA_VERSION=1.0.0 \
             -e APP_SECRET=test-secret \
             -e NEXTCLOUD_URL=http://localhost \
             -p 23000:23000 \
-            kyutai-transcription:test
+            live_transcription:test
 
       - name: Wait for container to be healthy
         run: |
