@@ -4,10 +4,10 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from nc_py_api import NextcloudApp
-from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app
+from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app, nc_app
 
 from .constants import APP_ID, APP_PORT, APP_VERSION
 from .livetypes import (
@@ -71,7 +71,8 @@ app = FastAPI(
 )
 
 # Add Nextcloud AppAPI authentication middleware (exclude endpoints AppAPI calls during setup)
-app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled", "init"])
+# Note: /init needs auth to call set_init_status(), so don't exclude it
+app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
 
 
 @app.get("/heartbeat")
@@ -81,11 +82,10 @@ async def heartbeat():
 
 
 @app.post("/init")
-async def init():
+async def init(nc: NextcloudApp = Depends(nc_app)):
     """Initialization endpoint called by AppAPI after deployment."""
     logger.info("Init endpoint called")
     # Signal initialization complete to AppAPI
-    nc = NextcloudApp()
     nc.set_init_status(100)
     logger.info("Init complete, status set to 100%")
     return {}
