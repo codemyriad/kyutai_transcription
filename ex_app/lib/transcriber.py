@@ -65,8 +65,12 @@ class OpusEncoder:
                     self.channels,
                     opuslib.APPLICATION_VOIP,
                 )
-            except ImportError:
-                logger.warning("opuslib not available, using raw audio fallback")
+                logger.info(f"Opus encoder initialized: {self.sample_rate}Hz, {self.channels}ch")
+            except ImportError as e:
+                logger.warning(f"opuslib not available ({e}), using raw audio fallback")
+                self._encoder = False
+            except Exception as e:
+                logger.error(f"Failed to initialize Opus encoder: {e}")
                 self._encoder = False
 
     def encode(self, pcm_data: np.ndarray) -> bytes:
@@ -346,8 +350,8 @@ class ModalTranscriber:
             # Send to Modal
             await self._ws.send(encoded)
 
-            logger.debug(
-                f"Sent {self._buffer_duration_ms:.0f}ms of audio ({len(encoded)} bytes)"
+            logger.info(
+                f"Sent {self._buffer_duration_ms:.0f}ms of audio ({len(encoded)} bytes) to Modal"
             )
 
             # Clear buffer
@@ -362,9 +366,14 @@ class ModalTranscriber:
             return
 
         try:
+            message_count = 0
             async for message in self._ws:
                 if not self._running:
                     break
+
+                message_count += 1
+                if message_count <= 5:
+                    logger.info(f"Received message {message_count} from Modal: {message[:200] if len(message) > 200 else message}")
 
                 result = self._parse_result(message)
                 if result:
