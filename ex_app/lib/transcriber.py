@@ -279,9 +279,9 @@ class ModalTranscriber:
             raw_file = self._debug_audio_dir / "audio_raw.pcm"
             with open(raw_file, "ab") as f:
                 f.write(frame_data)
-            # Log progress every 100 frames
-            if self._audio_frame_count % 100 == 0:
-                logger.info(
+            # Log progress every 500 frames (~10 seconds)
+            if self._audio_frame_count % 500 == 0:
+                logger.debug(
                     f"Audio capture: {self._audio_frame_count} frames, "
                     f"{self._total_audio_bytes / 1024:.1f} KB total"
                 )
@@ -320,7 +320,7 @@ class ModalTranscriber:
             # Send to Modal
             await self._ws.send(encoded)
 
-            logger.info(
+            logger.debug(
                 f"Sent {self._buffer_duration_ms:.0f}ms of audio ({len(encoded)} bytes) to Modal"
             )
 
@@ -336,14 +336,9 @@ class ModalTranscriber:
             return
 
         try:
-            message_count = 0
             async for message in self._ws:
                 if not self._running:
                     break
-
-                message_count += 1
-                if message_count <= 5:
-                    logger.info(f"Received message {message_count} from Modal: {message[:200] if len(message) > 200 else message}")
 
                 result = self._parse_result(message)
                 if result:
@@ -380,7 +375,7 @@ class ModalTranscriber:
                     if now - self._last_transcript_log >= self._transcript_log_interval:
                         transcript = "".join(self._transcript_buffer)
                         if transcript.strip():
-                            logger.info(f"Transcript: {transcript}")
+                            logger.info(f">>> TRANSCRIPT: {transcript}")
                         self._transcript_buffer = []
                         self._last_transcript_log = now
                 return TranscriptionResult(text=text, is_final=False)
@@ -389,7 +384,7 @@ class ModalTranscriber:
                 if self._transcript_buffer:
                     transcript = "".join(self._transcript_buffer)
                     if transcript.strip():
-                        logger.info(f"Transcript (final): {transcript}")
+                        logger.info(f">>> TRANSCRIPT (final): {transcript}")
                     self._transcript_buffer = []
                 return TranscriptionResult(text="", is_final=True, is_vad_end=True)
             elif msg_type == "error":
