@@ -23,6 +23,8 @@ class AudioStream:
         self._task: Optional[asyncio.Task] = None
         self._sample_rate: Optional[int] = None
         self._channels: Optional[int] = None
+        self._dropped_frames = 0
+        self._last_drop_log = 0.0
 
     @property
     def sample_rate(self) -> Optional[int]:
@@ -69,7 +71,16 @@ class AudioStream:
                     try:
                         self._frame_queue.put_nowait(pcm_data)
                     except asyncio.QueueFull:
-                        logger.warning("Audio frame queue full, dropping frame")
+                        self._dropped_frames += 1
+                        # Only log every 5 seconds to avoid spam
+                        import time
+                        now = time.time()
+                        if now - self._last_drop_log >= 5.0:
+                            logger.warning(
+                                f"Audio frame queue full, dropped {self._dropped_frames} frames"
+                            )
+                            self._dropped_frames = 0
+                            self._last_drop_log = now
 
                 except asyncio.TimeoutError:
                     # No frame received, continue waiting

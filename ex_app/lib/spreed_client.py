@@ -1146,7 +1146,8 @@ class SpreedClient:
                     },
                 )
                 stream = AudioStream(track)
-                await stream.start()
+                # Don't start stream yet - wait for Modal to connect first
+                # to avoid filling the queue during cold start
 
                 async with self.transcriber_lock:
                     transcriber = ModalTranscriber(

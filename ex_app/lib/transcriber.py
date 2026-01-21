@@ -230,7 +230,12 @@ class ModalTranscriber:
             logger.warning("Transcriber already running")
             return
 
+        # Connect to Modal first (this can take time for cold start)
         await self.connect()
+
+        # Now start the audio stream - don't queue audio before Modal is ready
+        await audio_stream.start()
+
         self._running = True
 
         # Start send and receive tasks
