@@ -84,6 +84,10 @@ async def heartbeat():
 async def init():
     """Initialization endpoint called by AppAPI after deployment."""
     logger.info("Init endpoint called")
+    # Signal initialization complete to AppAPI
+    nc = NextcloudApp()
+    nc.set_init_status(100)
+    logger.info("Init complete, status set to 100%")
     return {}
 
 
