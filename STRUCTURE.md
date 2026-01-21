@@ -114,10 +114,10 @@ User enables CC in Talk
 The `nc_py_api` library provides middleware that validates requests from Nextcloud:
 
 ```python
-app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
+app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled", "capabilities"])
 ```
 
-Endpoints in `disable_for` can be called without authentication (needed during setup).
+Endpoints in `disable_for` can be called without authentication (needed during setup and discovery).
 
 ### HPB Connection (spreed_client.py)
 

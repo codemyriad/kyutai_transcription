@@ -72,7 +72,7 @@ app = FastAPI(
 
 # Add Nextcloud AppAPI authentication middleware (exclude endpoints AppAPI calls during setup)
 # Note: /init needs auth to call set_init_status(), so don't exclude it
-app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled"])
+app.add_middleware(AppAPIAuthMiddleware, disable_for=["heartbeat", "enabled", "capabilities"])
 
 
 @app.get("/heartbeat")
