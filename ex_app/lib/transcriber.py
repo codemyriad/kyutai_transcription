@@ -46,27 +46,29 @@ class TranscriptionResult:
 
 
 class RawPCMEncoder:
-    """Simple passthrough encoder that sends raw PCM.
+    """Simple encoder that converts int16 PCM to float32 for Modal.
 
-    Format: 16-bit signed little-endian, mono, at the target sample rate.
-    The Modal server should be configured to accept this format.
+    Format: 32-bit float little-endian, mono, at the target sample rate.
+    Modal server expects float32 in range [-1.0, 1.0].
     """
 
     def __init__(self, sample_rate: int = KYUTAI_SAMPLE_RATE, channels: int = 1):
         self.sample_rate = sample_rate
         self.channels = channels
-        logger.info(f"Raw PCM encoder: {self.sample_rate}Hz, {self.channels}ch, s16le")
+        logger.info(f"Raw PCM encoder: {self.sample_rate}Hz, {self.channels}ch, float32le")
 
     def encode(self, pcm_data: np.ndarray) -> bytes:
-        """Pass through PCM data as raw bytes.
+        """Convert int16 PCM to float32 and return as bytes.
 
         Args:
             pcm_data: PCM audio data as int16 numpy array
 
         Returns:
-            Raw PCM bytes (s16le format)
+            Raw PCM bytes (float32 LE format, range [-1.0, 1.0])
         """
-        return pcm_data.astype(np.int16).tobytes()
+        # Convert int16 (-32768 to 32767) to float32 (-1.0 to 1.0)
+        float_data = pcm_data.astype(np.float32) / 32768.0
+        return float_data.tobytes()
 
     def flush(self) -> bytes:
         """Nothing to flush for raw PCM."""
