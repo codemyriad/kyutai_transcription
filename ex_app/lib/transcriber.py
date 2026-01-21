@@ -336,6 +336,8 @@ class ModalTranscriber:
 
             if msg_type == "token":
                 text = data.get("text", "")
+                if text.strip():
+                    logger.info(f"Transcription: {text}")
                 return TranscriptionResult(text=text, is_final=False)
             elif msg_type == "vad_end":
                 return TranscriptionResult(text="", is_final=True, is_vad_end=True)
