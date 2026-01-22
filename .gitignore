@@ -72,3 +72,4 @@ venv.bak/
 # Project specific
 *.log
 .secrets
+DEPLOY.local.md
