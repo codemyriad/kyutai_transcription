@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shutil
 import struct
 import io
 import os
@@ -446,7 +447,21 @@ class ModalTranscriber:
             await self._ws.close()
             self._ws = None
 
-        # Log audio capture summary
+        # Clear buffers and queues to release memory
+        self._audio_buffer.clear()
+        self._transcript_buffer.clear()
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        while not self._result_queue.empty():
+            try:
+                self._result_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        # Log audio capture summary and cleanup debug files
         if self._debug_audio_dir and self._audio_frame_count > 0:
             # Stereo 16-bit = 4 bytes per sample (2 channels × 2 bytes)
             duration_sec = self._total_audio_bytes / (WEBRTC_SAMPLE_RATE * 4)
@@ -455,6 +470,15 @@ class ModalTranscriber:
                 f"{self._total_audio_bytes / 1024:.1f} KB, ~{duration_sec:.1f}s of audio. "
                 f"Saved to {self._debug_audio_dir}"
             )
+
+        # Clean up debug audio files unless KEEP_DEBUG_AUDIO is set
+        if self._debug_audio_dir and not os.environ.get("KEEP_DEBUG_AUDIO"):
+            try:
+                shutil.rmtree(self._debug_audio_dir)
+                logger.debug(f"Cleaned up debug audio dir: {self._debug_audio_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up debug audio: {e}")
+        self._debug_audio_dir = None
 
         logger.info(f"Transcriber stopped for session {self.session_id}")
 

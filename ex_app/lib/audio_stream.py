@@ -116,6 +116,13 @@ class AudioStream:
                 pass
             self._task = None
 
+        # Clear the frame queue to release memory
+        while not self._frame_queue.empty():
+            try:
+                self._frame_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         logger.info("Audio stream stopped")
 
     def __aiter__(self):

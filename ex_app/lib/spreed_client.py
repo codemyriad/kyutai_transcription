@@ -86,6 +86,8 @@ class SpreedClient:
         self._transcript_sender: asyncio.Task | None = None
         self.transcribers: dict[str, ModalTranscriber] = {}
         self.transcriber_lock = asyncio.Lock()
+        self._result_consumer_tasks: dict[str, asyncio.Task] = {}
+        self._audio_streams: dict[str, AudioStream] = {}
         self.defunct = threading.Event()
         self._close_task: asyncio.Task | None = None
         self._deferred_close_task: asyncio.Task | None = None
@@ -657,6 +659,25 @@ class SpreedClient:
 
         with suppress(Exception):
             logger.debug(
+                "Cancelling result consumer tasks",
+                extra={"room_token": self.room_token},
+            )
+            for task in self._result_consumer_tasks.values():
+                if not task.done():
+                    task.cancel()
+            self._result_consumer_tasks.clear()
+
+        with suppress(Exception):
+            logger.debug(
+                "Stopping audio streams",
+                extra={"room_token": self.room_token},
+            )
+            for stream in self._audio_streams.values():
+                await stream.stop()
+            self._audio_streams.clear()
+
+        with suppress(Exception):
+            logger.debug(
                 "Shutting down all transcribers",
                 extra={"room_token": self.room_token},
             )
@@ -690,6 +711,13 @@ class SpreedClient:
                 )
                 self._transcript_sender.cancel()
                 self._transcript_sender = None
+
+        # Clear transcript queue to release memory
+        while not self.transcript_queue.empty():
+            try:
+                self.transcript_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         with suppress(Exception):
             if self._server and self._server.state == WsState.OPEN:
@@ -1155,13 +1183,15 @@ class SpreedClient:
                         language=self.lang_id,
                     )
                     self.transcribers[spkr_sid] = transcriber
+                    self._audio_streams[spkr_sid] = stream
 
                     try:
                         await transcriber.start(audio_stream=stream)
                         # Start consuming results in the background
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             self._consume_transcriber_results(transcriber, spkr_sid)
                         )
+                        self._result_consumer_tasks[spkr_sid] = task
                     except Exception:
                         logger.exception(
                             "Error starting transcriber",
