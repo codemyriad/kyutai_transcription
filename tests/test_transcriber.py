@@ -186,14 +186,14 @@ class TestModalTranscriberAsync:
 
     @pytest.mark.asyncio
     async def test_connect_missing_credentials(self):
-        """Should raise error when credentials are missing."""
-        transcriber = ModalTranscriber(
-            session_id="test",
-            workspace="",
-            modal_key="",
-            modal_secret="",
-        )
+        """Should raise error when credentials are actually missing on the instance."""
         from ex_app.lib.livetypes import ModalConnectionError
+
+        # Create transcriber and manually clear credentials after construction
+        transcriber = ModalTranscriber(session_id="test")
+        transcriber.workspace = ""
+        transcriber.modal_key = ""
+        transcriber.modal_secret = ""
 
         with pytest.raises(ModalConnectionError):
             await transcriber.connect()
