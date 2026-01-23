@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from nc_py_api import NextcloudApp
-from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app, nc_app
+from nc_py_api.ex_app import AppAPIAuthMiddleware, nc_app, run_app
 
 from .constants import APP_ID, APP_PORT, APP_VERSION
 from .livetypes import (
@@ -17,6 +17,7 @@ from .livetypes import (
     TranscribeRequest,
     TranscriptionProviderException,
 )
+from .memory_watchdog import MemoryWatchdog
 from .models import DEFAULT_LANGUAGE, get_supported_languages, is_language_supported
 from .service import Application
 from .utils import is_hpb_configured, is_modal_configured
@@ -31,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 # Application instance
 app_service = Application()
+
+# Memory watchdog
+memory_watchdog = MemoryWatchdog(
+    app_service=app_service,
+    shutdown_callback=app_service.shutdown,
+)
 
 
 @asynccontextmanager
@@ -55,10 +62,14 @@ async def lifespan(app: FastAPI):
             "Modal not configured. Set MODAL_WORKSPACE, MODAL_KEY, and MODAL_SECRET environment variables."
         )
 
+    # Start memory watchdog
+    memory_watchdog.start()
+
     yield
 
     # Shutdown
     logger.info("Shutting down Kyutai Transcription ExApp")
+    await memory_watchdog.stop()
     await app_service.shutdown()
 
 
@@ -301,8 +312,22 @@ async def leave_call(request: LeaveRequest):
 @app.get("/api/v1/status")
 async def status():
     """Get current status of the transcription service."""
+    from .memory_watchdog import _get_current_rss_mb
+
+    transcriber_count = sum(
+        len(client.transcribers)
+        for client in app_service.clients.values()
+        if not client.defunct.is_set()
+    )
+    current_mb = _get_current_rss_mb()
+    limit_mb = memory_watchdog._calculate_memory_limit_mb()
+
     return {
         "active_rooms": app_service.get_active_rooms(),
+        "active_transcribers": transcriber_count,
+        "memory_mb": round(current_mb, 1),
+        "memory_limit_mb": round(limit_mb, 1),
+        "memory_usage_percent": round((current_mb / limit_mb) * 100, 1) if limit_mb > 0 else 0,
         "version": APP_VERSION,
         "modal_configured": is_modal_configured(),
         "hpb_configured": is_hpb_configured(),
