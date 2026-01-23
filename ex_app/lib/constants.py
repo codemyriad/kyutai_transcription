@@ -11,9 +11,18 @@ APP_PORT = int(os.getenv("APP_PORT", "23000"))
 MODAL_WORKSPACE = os.getenv("MODAL_WORKSPACE", "")
 MODAL_KEY = os.getenv("MODAL_KEY", "")
 MODAL_SECRET = os.getenv("MODAL_SECRET", "")
+# Allow overriding the Modal host suffix in case the deployed app name changes
+MODAL_STT_HOST_SUFFIX = os.getenv(
+    "MODAL_STT_HOST_SUFFIX",
+    "kyutai-stt-rust-kyutaisttrustservice-serve.modal.run",
+)
 
 # Construct Modal WebSocket URL
-MODAL_STT_URL = f"wss://{MODAL_WORKSPACE}--kyutai-stt-kyutaisttservice-serve.modal.run/v1/stream"
+MODAL_STT_URL = (
+    f"wss://{MODAL_WORKSPACE}--{MODAL_STT_HOST_SUFFIX}/v1/stream"
+    if MODAL_WORKSPACE
+    else ""
+)
 
 # HPB configuration
 LT_HPB_URL = os.getenv("LT_HPB_URL", "")

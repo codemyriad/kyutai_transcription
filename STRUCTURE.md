@@ -140,7 +140,7 @@ Authentication uses `LT_INTERNAL_SECRET` with HMAC-SHA256 signatures.
 ### Modal Transcription (transcriber.py)
 
 Audio is sent to Modal.com where the Kyutai Moshi model runs:
-- WebSocket connection to `wss://{workspace}--kyutai-stt-*.modal.run/ws`
+- WebSocket connection to `wss://{workspace}--kyutai-stt-rust-kyutaisttrustservice-serve.modal.run/v1/stream`
 - Opus-encoded audio chunks sent in real-time
 - Transcription tokens returned as they're generated
 

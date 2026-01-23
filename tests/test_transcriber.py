@@ -86,7 +86,7 @@ class TestModalTranscriber:
             modal_key="key",
             modal_secret="secret",
         )
-        expected = "wss://my-workspace--kyutai-stt-kyutaisttservice-serve.modal.run/v1/stream"
+        expected = "wss://my-workspace--kyutai-stt-rust-kyutaisttrustservice-serve.modal.run/v1/stream"
         assert transcriber.url == expected
 
     def test_set_language(self):

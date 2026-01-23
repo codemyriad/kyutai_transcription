@@ -19,6 +19,7 @@ from .constants import (
     MODAL_CONNECT_TIMEOUT,
     MODAL_KEY,
     MODAL_SECRET,
+    MODAL_STT_HOST_SUFFIX,
     MODAL_WORKSPACE,
     WEBRTC_SAMPLE_RATE,
 )
@@ -165,7 +166,7 @@ class ModalTranscriber:
     @property
     def url(self) -> str:
         """Get the Modal WebSocket URL."""
-        return f"wss://{self.workspace}--kyutai-stt-kyutaisttservice-serve.modal.run/v1/stream"
+        return f"wss://{self.workspace}--{MODAL_STT_HOST_SUFFIX}/v1/stream"
 
     def _get_headers(self) -> dict[str, str]:
         """Get authentication headers for Modal."""
