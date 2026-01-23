@@ -2,29 +2,26 @@
 
 import asyncio
 import logging
-import shutil
-import struct
-import io
 import os
+import shutil
 import time
-from pathlib import Path
-from typing import Optional, AsyncGenerator, Protocol
 from dataclasses import dataclass
+from pathlib import Path
+from typing import AsyncGenerator, Optional, Protocol
 
 import numpy as np
 import websockets
 from websockets.client import WebSocketClientProtocol
 
 from .constants import (
-    MODAL_WORKSPACE,
+    KYUTAI_SAMPLE_RATE,
+    MODAL_CONNECT_TIMEOUT,
     MODAL_KEY,
     MODAL_SECRET,
-    MODAL_STT_URL,
-    MODAL_CONNECT_TIMEOUT,
-    KYUTAI_SAMPLE_RATE,
+    MODAL_WORKSPACE,
     WEBRTC_SAMPLE_RATE,
 )
-from .livetypes import Transcript, ModalConnectionError, TranscriptionError
+from .livetypes import ModalConnectionError
 
 logger = logging.getLogger(__name__)
 
@@ -223,12 +220,12 @@ class ModalTranscriber:
         with open(metadata_file, "w") as f:
             f.write(f"Audio capture for session: {self.session_id}\n")
             f.write(f"Timestamp: {timestamp}\n")
-            f.write(f"Format: Raw PCM, 16-bit signed little-endian\n")
+            f.write("Format: Raw PCM, 16-bit signed little-endian\n")
             f.write(f"Sample rate: {WEBRTC_SAMPLE_RATE} Hz\n")
-            f.write(f"Channels: 2 (stereo, WebRTC default)\n")
-            f.write(f"\nTo play with ffplay:\n")
+            f.write("Channels: 2 (stereo, WebRTC default)\n")
+            f.write("\nTo play with ffplay:\n")
             f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 audio_raw.pcm\n")
-            f.write(f"\nTo convert to WAV:\n")
+            f.write("\nTo convert to WAV:\n")
             f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 -i audio_raw.pcm audio.wav\n")
         logger.info(f"Saving debug audio to {self._debug_audio_dir}")
 

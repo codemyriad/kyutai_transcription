@@ -60,12 +60,73 @@ def _get_current_rss_mb() -> float:
     return 0.0
 
 
+def _get_container_memory_limit_mb() -> float:
+    """Get container memory limit in MB (from cgroups).
+
+    Returns:
+        Memory limit in megabytes, or 0 if not in a container/no limit
+    """
+    # Try cgroup v2 first
+    try:
+        with open("/sys/fs/cgroup/memory.max", "r") as f:
+            value = f.read().strip()
+            if value != "max":
+                return int(value) / (1024 * 1024)  # bytes to MB
+    except (OSError, ValueError):
+        pass
+
+    # Try cgroup v1
+    try:
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r") as f:
+            value = int(f.read().strip())
+            # Very large values mean "no limit"
+            if value < 9223372036854771712:  # Common "no limit" value
+                return value / (1024 * 1024)  # bytes to MB
+    except (OSError, ValueError):
+        pass
+
+    return 0.0
+
+
+def _get_container_memory_usage_mb() -> float:
+    """Get container memory usage in MB (from cgroups).
+
+    Returns:
+        Memory usage in megabytes, or 0 if not in a container
+    """
+    # Try cgroup v2 first
+    try:
+        with open("/sys/fs/cgroup/memory.current", "r") as f:
+            return int(f.read().strip()) / (1024 * 1024)  # bytes to MB
+    except (OSError, ValueError):
+        pass
+
+    # Try cgroup v1
+    try:
+        with open("/sys/fs/cgroup/memory/memory.usage_in_bytes", "r") as f:
+            return int(f.read().strip()) / (1024 * 1024)  # bytes to MB
+    except (OSError, ValueError):
+        pass
+
+    return 0.0
+
+
 def _get_available_memory_mb() -> float:
-    """Get available system memory in MB.
+    """Get available memory in MB.
+
+    First checks container limits (cgroups), then falls back to host memory.
 
     Returns:
         Available memory in megabytes, or 0 if unable to determine
     """
+    # Check container memory first
+    container_limit = _get_container_memory_limit_mb()
+    if container_limit > 0:
+        container_usage = _get_container_memory_usage_mb()
+        if container_usage > 0:
+            return container_limit - container_usage
+
+    # Fall back to host memory
     try:
         with open("/proc/meminfo", "r") as f:
             for line in f:

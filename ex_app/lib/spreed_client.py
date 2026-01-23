@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import json
 import logging
-import os
 import threading
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -15,8 +14,8 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 from aiortc.sdp import candidate_from_sdp
 from nc_py_api import NextcloudApp
-from websockets import connect
 from websockets import State as WsState
+from websockets import connect
 from websockets.client import ClientConnection
 from websockets.exceptions import WebSocketException
 
