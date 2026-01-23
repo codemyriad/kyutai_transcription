@@ -17,7 +17,7 @@ from .livetypes import (
     TranscribeRequest,
     TranscriptionProviderException,
 )
-from .memory_watchdog import MemoryWatchdog
+from .memory_watchdog import InsufficientMemoryError, MemoryWatchdog
 from .models import DEFAULT_LANGUAGE, get_supported_languages, is_language_supported
 from .service import Application
 from .utils import is_hpb_configured, is_modal_configured
@@ -125,6 +125,15 @@ async def transcription_exception_handler(
     )
 
 
+@app.exception_handler(InsufficientMemoryError)
+async def insufficient_memory_handler(request: Request, exc: InsufficientMemoryError):
+    """Handle insufficient memory errors."""
+    return JSONResponse(
+        status_code=503,
+        content={"error": str(exc)},
+    )
+
+
 @app.get("/enabled")
 async def enabled():
     """Check if the app is enabled and configured."""
@@ -208,6 +217,10 @@ async def transcribe(request: TranscribeRequest):
             },
         )
         lang_id = DEFAULT_LANGUAGE
+
+    # Check memory before accepting new transcription request
+    if request.enable:
+        memory_watchdog.check_memory_available_for_new_transcriber()
 
     try:
         await app_service.transcript_req(

@@ -70,6 +70,32 @@ def _get_current_rss_mb() -> float:
     return 0.0
 
 
+def _get_available_memory_mb() -> float:
+    """Get available system memory in MB.
+
+    Returns:
+        Available memory in megabytes, or 0 if unable to determine
+    """
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    # Format: "MemAvailable:    12345 kB"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) / 1024  # Convert kB to MB
+    except (OSError, ValueError, IndexError):
+        pass
+
+    return 0.0
+
+
+class InsufficientMemoryError(Exception):
+    """Raised when there is not enough memory to accept a new transcriber."""
+
+    pass
+
+
 class MemoryWatchdog:
     """Monitors memory usage and triggers shutdown if limits are exceeded."""
 
@@ -226,8 +252,114 @@ class MemoryWatchdog:
             },
         )
 
+    def check_memory_available_for_new_transcriber(self) -> None:
+        """Check if there's enough memory to accept a new transcriber.
+
+        Raises:
+            InsufficientMemoryError: If there's not enough memory
+        """
+        current_mb = _get_current_rss_mb()
+        available_mb = _get_available_memory_mb()
+
+        # Memory needed for one more transcriber (with headroom)
+        needed_for_new_mb = MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT)
+
+        # Check against environment limit if set
+        if self._env_max_memory_mb:
+            projected_usage = current_mb + needed_for_new_mb
+            if projected_usage > self._env_max_memory_mb:
+                transcriber_count = self._count_active_transcribers()
+                logger.error(
+                    "Cannot accept new transcriber: would exceed configured memory limit",
+                    extra={
+                        "current_mb": round(current_mb, 1),
+                        "needed_for_new_mb": round(needed_for_new_mb, 1),
+                        "projected_mb": round(projected_usage, 1),
+                        "limit_mb": self._env_max_memory_mb,
+                        "transcriber_count": transcriber_count,
+                    },
+                )
+                raise InsufficientMemoryError(
+                    f"Insufficient memory: accepting a new transcriber would use "
+                    f"{projected_usage:.0f}MB, exceeding limit of {self._env_max_memory_mb}MB"
+                )
+
+        # Check against available system memory
+        if available_mb > 0 and available_mb < needed_for_new_mb:
+            transcriber_count = self._count_active_transcribers()
+            logger.error(
+                "Cannot accept new transcriber: insufficient system memory available",
+                extra={
+                    "current_mb": round(current_mb, 1),
+                    "available_mb": round(available_mb, 1),
+                    "needed_for_new_mb": round(needed_for_new_mb, 1),
+                    "transcriber_count": transcriber_count,
+                },
+            )
+            raise InsufficientMemoryError(
+                f"Insufficient memory: only {available_mb:.0f}MB available, "
+                f"but {needed_for_new_mb:.0f}MB needed for new transcriber"
+            )
+
+    def check_startup_memory(self) -> None:
+        """Check if system has enough memory at startup.
+
+        Logs warnings or errors if memory is constrained.
+        """
+        available_mb = _get_available_memory_mb()
+        current_mb = _get_current_rss_mb()
+
+        # Minimum memory needed: base + at least one transcriber
+        min_needed_mb = (BASE_MEMORY_MB + MEMORY_PER_TRANSCRIBER_MB) * (
+            1 + MEMORY_HEADROOM_PERCENT
+        )
+
+        if available_mb == 0:
+            logger.warning(
+                "Could not determine available system memory - memory checks will be limited"
+            )
+            return
+
+        total_available = available_mb + current_mb  # Include what we're already using
+
+        if total_available < min_needed_mb:
+            logger.error(
+                "System has insufficient memory for transcription service",
+                extra={
+                    "available_mb": round(available_mb, 1),
+                    "current_rss_mb": round(current_mb, 1),
+                    "minimum_needed_mb": round(min_needed_mb, 1),
+                },
+            )
+        elif total_available < min_needed_mb * 2:
+            # Can handle maybe 1-2 transcribers
+            max_transcribers = int(
+                (total_available - BASE_MEMORY_MB)
+                / (MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT))
+            )
+            logger.warning(
+                "System memory is limited - transcription capacity will be constrained",
+                extra={
+                    "available_mb": round(available_mb, 1),
+                    "estimated_max_transcribers": max(1, max_transcribers),
+                },
+            )
+        else:
+            max_transcribers = int(
+                (total_available - BASE_MEMORY_MB)
+                / (MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT))
+            )
+            logger.info(
+                "Memory check passed",
+                extra={
+                    "available_mb": round(available_mb, 1),
+                    "estimated_max_transcribers": max_transcribers,
+                },
+            )
+
     def start(self) -> None:
         """Start the memory watchdog."""
+        self.check_startup_memory()
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._monitor_loop())
 
