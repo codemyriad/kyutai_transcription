@@ -229,6 +229,14 @@ python -m uvicorn main:app --reload --port 23000
 
 ### Running Tests
 
+Prefer using [uv](https://github.com/astral-sh/uv) to isolate deps quickly:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run pytest -v
+```
+
+If you already have a venv active:
+
 ```bash
 pytest tests/ -v
 ```

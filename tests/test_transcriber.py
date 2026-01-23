@@ -1,6 +1,7 @@
 """Tests for transcriber module."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -197,6 +198,52 @@ class TestModalTranscriberAsync:
 
         with pytest.raises(ModalConnectionError):
             await transcriber.connect()
+
+    def test_log_transcript_includes_speaker(self, caplog):
+        """Should log speaker context with transcript."""
+        transcriber = ModalTranscriber(
+            session_id="speaker123",
+            workspace="ws",
+            modal_key="key",
+            modal_secret="secret",
+        )
+        with caplog.at_level(logging.INFO):
+            transcriber._log_transcript("hello world", final=True)
+        assert any(
+            "[speaker=speaker123]" in record.message for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_flush_buffer_stops_on_connection_closed(self):
+        """Should stop transcriber when Modal closes during send."""
+        transcriber = ModalTranscriber(
+            session_id="sess123",
+            workspace="ws",
+            modal_key="key",
+            modal_secret="secret",
+        )
+        transcriber._ws = MagicMock()
+        transcriber._ws.send = AsyncMock(
+            side_effect=Exception("placeholder")
+        )
+        transcriber._running = True
+        transcriber._audio_buffer = [np.zeros(100, dtype=np.int16)]
+        transcriber._buffer_duration_ms = transcriber._min_buffer_ms
+
+        # Simulate websockets connection closed during send
+        from websockets.frames import Close
+        from websockets.exceptions import ConnectionClosedOK
+
+        close_frame = Close(1000, "OK")
+        transcriber._ws.send.side_effect = ConnectionClosedOK(
+            rcvd=close_frame, sent=close_frame, rcvd_then_sent=True
+        )
+
+        await transcriber._flush_buffer()
+
+        assert transcriber._running is False
+        assert transcriber._ws is None
+        assert transcriber._audio_buffer == []
 
     @pytest.mark.asyncio
     async def test_stop_when_not_running(self):

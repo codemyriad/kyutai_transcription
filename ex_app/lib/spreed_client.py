@@ -593,6 +593,24 @@ class SpreedClient:
                 )
                 return
             sids = list(self.targets.keys())
+            nc_sid_map = dict(self.nc_sid_map)
+
+        nc_targets = [
+            nc_sid for nc_sid, session_id in nc_sid_map.items() if session_id in sids
+        ]
+        preview = transcript.message if len(transcript.message) < 200 else transcript.message[:197] + "..."
+        logger.info(
+            "Sending transcript",
+            extra={
+                "room_token": self.room_token,
+                "speaker_session_id": transcript.speaker_session_id,
+                "final": transcript.final,
+                "targets": sids,
+                "targets_nc": nc_targets,
+                "lang_id": transcript.lang_id,
+                "preview": preview,
+            },
+        )
 
         send_tasks = [
             self.send_message(

@@ -1,6 +1,7 @@
 """Modal-based transcriber using Kyutai STT."""
 
 import asyncio
+import contextlib
 import logging
 import os
 import shutil
@@ -250,6 +251,7 @@ class ModalTranscriber:
                 frame = await audio_stream.get_frame()
                 if frame is None:
                     logger.info("Audio stream ended")
+                    self._running = False
                     break
 
                 await self._process_and_send_audio(frame)
@@ -257,7 +259,10 @@ class ModalTranscriber:
             logger.info("Audio send loop cancelled")
         except Exception as e:
             logger.error(f"Error in audio send loop: {e}")
+            self._running = False
         finally:
+            with contextlib.suppress(Exception):
+                await audio_stream.stop()
             # Send any remaining buffered audio
             await self._flush_buffer()
 
@@ -331,6 +336,15 @@ class ModalTranscriber:
             # Clear buffer
             self._audio_buffer = []
             self._buffer_duration_ms = 0
+        except websockets.ConnectionClosed as e:
+            logger.warning(
+                "Modal connection closed while sending audio (%s). Stopping transcriber.",
+                e,
+            )
+            self._running = False
+            self._ws = None
+            self._audio_buffer = []
+            self._buffer_duration_ms = 0
         except Exception as e:
             logger.error(f"Error sending audio: {e}")
 
@@ -349,8 +363,10 @@ class ModalTranscriber:
                     await self._result_queue.put(result)
         except asyncio.CancelledError:
             logger.info("Results receive loop cancelled")
-        except websockets.ConnectionClosed:
-            logger.info("Modal connection closed")
+        except websockets.ConnectionClosed as e:
+            logger.info("Modal connection closed: %s", e)
+            self._running = False
+            self._ws = None
         except Exception as e:
             logger.error(f"Error in receive loop: {e}")
 
@@ -379,7 +395,7 @@ class ModalTranscriber:
                     if now - self._last_transcript_log >= self._transcript_log_interval:
                         transcript = "".join(self._transcript_buffer)
                         if transcript.strip():
-                            logger.info(f">>> TRANSCRIPT: {transcript}")
+                            self._log_transcript(transcript)
                         self._transcript_buffer = []
                         self._last_transcript_log = now
                 return TranscriptionResult(text=text, is_final=False)
@@ -388,7 +404,7 @@ class ModalTranscriber:
                 if self._transcript_buffer:
                     transcript = "".join(self._transcript_buffer)
                     if transcript.strip():
-                        logger.info(f">>> TRANSCRIPT (final): {transcript}")
+                        self._log_transcript(transcript, final=True)
                     self._transcript_buffer = []
                 return TranscriptionResult(text="", is_final=True, is_vad_end=True)
             elif msg_type == "error":
@@ -490,6 +506,13 @@ class ModalTranscriber:
         """
         self.language = language
         logger.info(f"Language set to {language} for session {self.session_id}")
+
+    def _log_transcript(self, transcript: str, final: bool = False) -> None:
+        """Log transcript text with speaker context."""
+        final_tag = " (final)" if final else ""
+        logger.info(
+            f"[speaker={self.session_id}]{final_tag} >>> TRANSCRIPT: {transcript}"
+        )
 
 
 class TranscriberFactory:
