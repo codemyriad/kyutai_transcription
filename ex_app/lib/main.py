@@ -325,7 +325,7 @@ async def leave_call(request: LeaveRequest):
 @app.get("/api/v1/status")
 async def status():
     """Get current status of the transcription service."""
-    from .memory_watchdog import _get_current_rss_mb
+    from .memory_watchdog import _get_available_memory_mb, _get_current_rss_mb
 
     transcriber_count = sum(
         len(client.transcribers)
@@ -333,14 +333,15 @@ async def status():
         if not client.defunct.is_set()
     )
     current_mb = _get_current_rss_mb()
+    available_mb = _get_available_memory_mb()
     limit_mb = memory_watchdog._calculate_memory_limit_mb()
 
     return {
         "active_rooms": app_service.get_active_rooms(),
         "active_transcribers": transcriber_count,
         "memory_mb": round(current_mb, 1),
-        "memory_limit_mb": round(limit_mb, 1),
-        "memory_usage_percent": round((current_mb / limit_mb) * 100, 1) if limit_mb > 0 else 0,
+        "memory_available_mb": round(available_mb, 1),
+        "memory_limit_mb": round(limit_mb, 1) if limit_mb > 0 else None,
         "version": APP_VERSION,
         "modal_configured": is_modal_configured(),
         "hpb_configured": is_hpb_configured(),

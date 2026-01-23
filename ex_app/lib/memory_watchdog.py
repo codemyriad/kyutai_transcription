@@ -1,7 +1,7 @@
 """Memory watchdog to prevent runaway memory usage.
 
 This module monitors memory usage and triggers shutdown if limits are exceeded.
-It dynamically calculates expected memory based on active transcriber count.
+It only takes action when system memory is actually constrained.
 """
 
 import asyncio
@@ -15,29 +15,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Memory constants (in bytes)
-MB = 1024 * 1024
-
-# Base memory for Python + FastAPI + libraries (conservative estimate)
-BASE_MEMORY_MB = 150
-
 # Memory per active transcriber (WebRTC + resampler + buffers + Modal WebSocket)
-MEMORY_PER_TRANSCRIBER_MB = 50
-
-# Additional headroom percentage (20% leeway)
-MEMORY_HEADROOM_PERCENT = 0.20
-
-# Absolute maximum memory limit (fallback if no transcribers)
-# Can be overridden with LT_MAX_MEMORY_MB environment variable
-DEFAULT_MAX_MEMORY_MB = 512
+# Used for estimating capacity at startup
+MEMORY_PER_TRANSCRIBER_MB = 100
 
 # Check interval in seconds
 CHECK_INTERVAL_SECONDS = 5
 
-# Thresholds for warnings and actions (as fraction of calculated limit)
-THRESHOLD_WARNING = 0.80
-THRESHOLD_GRACEFUL_SHUTDOWN = 0.95
-THRESHOLD_FORCE_EXIT = 1.0
+# Minimum available system memory before taking action (MB)
+# If available memory drops below this, we start warning/shutting down
+MIN_AVAILABLE_MEMORY_MB = 100
+
+# Critical threshold - force exit if available memory drops below this (MB)
+CRITICAL_AVAILABLE_MEMORY_MB = 50
 
 
 def _get_current_rss_mb() -> float:
@@ -97,7 +87,7 @@ class InsufficientMemoryError(Exception):
 
 
 class MemoryWatchdog:
-    """Monitors memory usage and triggers shutdown if limits are exceeded."""
+    """Monitors memory usage and triggers shutdown if system memory is low."""
 
     def __init__(
         self,
@@ -115,7 +105,7 @@ class MemoryWatchdog:
         self._task: asyncio.Task | None = None
         self._shutdown_triggered = False
 
-        # Allow override via environment variable
+        # Allow hard limit override via environment variable
         env_max = os.getenv("LT_MAX_MEMORY_MB")
         self._env_max_memory_mb = int(env_max) if env_max else None
 
@@ -132,27 +122,17 @@ class MemoryWatchdog:
         return count
 
     def _calculate_memory_limit_mb(self) -> float:
-        """Calculate dynamic memory limit based on active transcribers.
+        """Calculate memory limit for status reporting.
+
+        If LT_MAX_MEMORY_MB is set, returns that.
+        Otherwise returns 0 (no limit).
 
         Returns:
-            Memory limit in megabytes
+            Memory limit in megabytes, or 0 if no limit
         """
-        transcriber_count = self._count_active_transcribers()
-
-        # Calculate expected memory
-        expected_mb = BASE_MEMORY_MB + (transcriber_count * MEMORY_PER_TRANSCRIBER_MB)
-
-        # Add headroom
-        limit_mb = expected_mb * (1 + MEMORY_HEADROOM_PERCENT)
-
-        # Apply environment override as ceiling if set
         if self._env_max_memory_mb:
-            limit_mb = min(limit_mb, self._env_max_memory_mb)
-
-        # Ensure minimum limit
-        limit_mb = max(limit_mb, DEFAULT_MAX_MEMORY_MB)
-
-        return limit_mb
+            return float(self._env_max_memory_mb)
+        return 0.0
 
     async def _monitor_loop(self) -> None:
         """Main monitoring loop."""
@@ -160,8 +140,8 @@ class MemoryWatchdog:
             "Memory watchdog started",
             extra={
                 "check_interval_seconds": CHECK_INTERVAL_SECONDS,
-                "base_memory_mb": BASE_MEMORY_MB,
-                "memory_per_transcriber_mb": MEMORY_PER_TRANSCRIBER_MB,
+                "min_available_memory_mb": MIN_AVAILABLE_MEMORY_MB,
+                "critical_available_memory_mb": CRITICAL_AVAILABLE_MEMORY_MB,
                 "env_max_memory_mb": self._env_max_memory_mb,
             },
         )
@@ -182,72 +162,99 @@ class MemoryWatchdog:
     async def _check_memory(self) -> None:
         """Check current memory usage against limits."""
         current_mb = _get_current_rss_mb()
-        if current_mb == 0:
-            # Could not determine memory usage
-            return
-
-        limit_mb = self._calculate_memory_limit_mb()
+        available_mb = _get_available_memory_mb()
         transcriber_count = self._count_active_transcribers()
-        usage_ratio = current_mb / limit_mb
 
-        if usage_ratio >= THRESHOLD_FORCE_EXIT:
-            logger.critical(
-                "Memory limit exceeded, forcing exit",
-                extra={
-                    "current_mb": round(current_mb, 1),
-                    "limit_mb": round(limit_mb, 1),
-                    "usage_percent": round(usage_ratio * 100, 1),
-                    "transcriber_count": transcriber_count,
-                },
-            )
-            # Force exit - this is the last resort
-            sys.exit(137)  # 128 + 9 (SIGKILL)
-
-        if usage_ratio >= THRESHOLD_GRACEFUL_SHUTDOWN:
-            if not self._shutdown_triggered:
-                self._shutdown_triggered = True
-                logger.error(
-                    "Memory threshold exceeded, initiating graceful shutdown",
+        # Check hard limit from environment variable
+        if self._env_max_memory_mb and current_mb > 0:
+            if current_mb >= self._env_max_memory_mb:
+                logger.critical(
+                    "Memory limit exceeded (LT_MAX_MEMORY_MB), forcing exit",
                     extra={
                         "current_mb": round(current_mb, 1),
-                        "limit_mb": round(limit_mb, 1),
-                        "usage_percent": round(usage_ratio * 100, 1),
+                        "limit_mb": self._env_max_memory_mb,
+                        "available_mb": round(available_mb, 1),
                         "transcriber_count": transcriber_count,
                     },
                 )
-                # Trigger graceful shutdown
-                try:
-                    await asyncio.wait_for(self._shutdown_callback(), timeout=30)
-                except asyncio.TimeoutError:
-                    logger.error("Graceful shutdown timed out, forcing exit")
-                    sys.exit(137)
-                except Exception as e:
-                    logger.exception("Error during graceful shutdown", exc_info=e)
-                    sys.exit(137)
-
-                # Exit after graceful shutdown
                 sys.exit(137)
-            return
 
-        if usage_ratio >= THRESHOLD_WARNING:
-            logger.warning(
-                "Memory usage high",
-                extra={
-                    "current_mb": round(current_mb, 1),
-                    "limit_mb": round(limit_mb, 1),
-                    "usage_percent": round(usage_ratio * 100, 1),
-                    "transcriber_count": transcriber_count,
-                },
-            )
-            return
+            if current_mb >= self._env_max_memory_mb * 0.95:
+                if not self._shutdown_triggered:
+                    self._shutdown_triggered = True
+                    logger.error(
+                        "Approaching memory limit, initiating graceful shutdown",
+                        extra={
+                            "current_mb": round(current_mb, 1),
+                            "limit_mb": self._env_max_memory_mb,
+                            "available_mb": round(available_mb, 1),
+                            "transcriber_count": transcriber_count,
+                        },
+                    )
+                    try:
+                        await asyncio.wait_for(self._shutdown_callback(), timeout=30)
+                    except asyncio.TimeoutError:
+                        logger.error("Graceful shutdown timed out, forcing exit")
+                    except Exception as e:
+                        logger.exception("Error during graceful shutdown", exc_info=e)
+                    sys.exit(137)
+                return
+
+            if current_mb >= self._env_max_memory_mb * 0.80:
+                logger.warning(
+                    "Memory usage approaching limit",
+                    extra={
+                        "current_mb": round(current_mb, 1),
+                        "limit_mb": self._env_max_memory_mb,
+                        "usage_percent": round(
+                            current_mb / self._env_max_memory_mb * 100, 1
+                        ),
+                        "transcriber_count": transcriber_count,
+                    },
+                )
+                return
+
+        # Check system available memory (only if we can read it)
+        if available_mb > 0:
+            if available_mb < CRITICAL_AVAILABLE_MEMORY_MB:
+                logger.critical(
+                    "System memory critically low, forcing exit",
+                    extra={
+                        "current_mb": round(current_mb, 1),
+                        "available_mb": round(available_mb, 1),
+                        "critical_threshold_mb": CRITICAL_AVAILABLE_MEMORY_MB,
+                        "transcriber_count": transcriber_count,
+                    },
+                )
+                sys.exit(137)
+
+            if available_mb < MIN_AVAILABLE_MEMORY_MB:
+                if not self._shutdown_triggered:
+                    self._shutdown_triggered = True
+                    logger.error(
+                        "System memory low, initiating graceful shutdown",
+                        extra={
+                            "current_mb": round(current_mb, 1),
+                            "available_mb": round(available_mb, 1),
+                            "min_threshold_mb": MIN_AVAILABLE_MEMORY_MB,
+                            "transcriber_count": transcriber_count,
+                        },
+                    )
+                    try:
+                        await asyncio.wait_for(self._shutdown_callback(), timeout=30)
+                    except asyncio.TimeoutError:
+                        logger.error("Graceful shutdown timed out, forcing exit")
+                    except Exception as e:
+                        logger.exception("Error during graceful shutdown", exc_info=e)
+                    sys.exit(137)
+                return
 
         # Normal operation - log at debug level periodically
         logger.debug(
             "Memory check OK",
             extra={
                 "current_mb": round(current_mb, 1),
-                "limit_mb": round(limit_mb, 1),
-                "usage_percent": round(usage_ratio * 100, 1),
+                "available_mb": round(available_mb, 1),
                 "transcriber_count": transcriber_count,
             },
         )
@@ -261,19 +268,15 @@ class MemoryWatchdog:
         current_mb = _get_current_rss_mb()
         available_mb = _get_available_memory_mb()
 
-        # Memory needed for one more transcriber (with headroom)
-        needed_for_new_mb = MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT)
-
         # Check against environment limit if set
-        if self._env_max_memory_mb:
-            projected_usage = current_mb + needed_for_new_mb
+        if self._env_max_memory_mb and current_mb > 0:
+            projected_usage = current_mb + MEMORY_PER_TRANSCRIBER_MB
             if projected_usage > self._env_max_memory_mb:
                 transcriber_count = self._count_active_transcribers()
                 logger.error(
                     "Cannot accept new transcriber: would exceed configured memory limit",
                     extra={
                         "current_mb": round(current_mb, 1),
-                        "needed_for_new_mb": round(needed_for_new_mb, 1),
                         "projected_mb": round(projected_usage, 1),
                         "limit_mb": self._env_max_memory_mb,
                         "transcriber_count": transcriber_count,
@@ -285,20 +288,21 @@ class MemoryWatchdog:
                 )
 
         # Check against available system memory
-        if available_mb > 0 and available_mb < needed_for_new_mb:
+        if available_mb > 0 and available_mb < MEMORY_PER_TRANSCRIBER_MB + MIN_AVAILABLE_MEMORY_MB:
             transcriber_count = self._count_active_transcribers()
             logger.error(
                 "Cannot accept new transcriber: insufficient system memory available",
                 extra={
                     "current_mb": round(current_mb, 1),
                     "available_mb": round(available_mb, 1),
-                    "needed_for_new_mb": round(needed_for_new_mb, 1),
+                    "needed_mb": MEMORY_PER_TRANSCRIBER_MB,
                     "transcriber_count": transcriber_count,
                 },
             )
             raise InsufficientMemoryError(
                 f"Insufficient memory: only {available_mb:.0f}MB available, "
-                f"but {needed_for_new_mb:.0f}MB needed for new transcriber"
+                f"need {MEMORY_PER_TRANSCRIBER_MB}MB for new transcriber plus "
+                f"{MIN_AVAILABLE_MEMORY_MB}MB reserve"
             )
 
     def check_startup_memory(self) -> None:
@@ -309,51 +313,48 @@ class MemoryWatchdog:
         available_mb = _get_available_memory_mb()
         current_mb = _get_current_rss_mb()
 
-        # Minimum memory needed: base + at least one transcriber
-        min_needed_mb = (BASE_MEMORY_MB + MEMORY_PER_TRANSCRIBER_MB) * (
-            1 + MEMORY_HEADROOM_PERCENT
-        )
-
         if available_mb == 0:
             logger.warning(
-                "Could not determine available system memory - memory checks will be limited"
+                "Could not determine available system memory - memory checks disabled"
             )
             return
 
-        total_available = available_mb + current_mb  # Include what we're already using
+        # Estimate how many transcribers we can support
+        usable_memory = available_mb - MIN_AVAILABLE_MEMORY_MB
+        if self._env_max_memory_mb:
+            # Factor in the hard limit
+            max_from_limit = self._env_max_memory_mb - current_mb
+            usable_memory = min(usable_memory, max_from_limit)
 
-        if total_available < min_needed_mb:
+        estimated_capacity = max(0, int(usable_memory / MEMORY_PER_TRANSCRIBER_MB))
+
+        if estimated_capacity == 0:
             logger.error(
-                "System has insufficient memory for transcription service",
+                "System has insufficient memory for transcription",
                 extra={
                     "available_mb": round(available_mb, 1),
                     "current_rss_mb": round(current_mb, 1),
-                    "minimum_needed_mb": round(min_needed_mb, 1),
+                    "env_max_memory_mb": self._env_max_memory_mb,
                 },
             )
-        elif total_available < min_needed_mb * 2:
-            # Can handle maybe 1-2 transcribers
-            max_transcribers = int(
-                (total_available - BASE_MEMORY_MB)
-                / (MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT))
-            )
+        elif estimated_capacity <= 2:
             logger.warning(
-                "System memory is limited - transcription capacity will be constrained",
+                "System memory is limited",
                 extra={
                     "available_mb": round(available_mb, 1),
-                    "estimated_max_transcribers": max(1, max_transcribers),
+                    "current_rss_mb": round(current_mb, 1),
+                    "estimated_max_transcribers": estimated_capacity,
+                    "env_max_memory_mb": self._env_max_memory_mb,
                 },
             )
         else:
-            max_transcribers = int(
-                (total_available - BASE_MEMORY_MB)
-                / (MEMORY_PER_TRANSCRIBER_MB * (1 + MEMORY_HEADROOM_PERCENT))
-            )
             logger.info(
                 "Memory check passed",
                 extra={
                     "available_mb": round(available_mb, 1),
-                    "estimated_max_transcribers": max_transcribers,
+                    "current_rss_mb": round(current_mb, 1),
+                    "estimated_max_transcribers": estimated_capacity,
+                    "env_max_memory_mb": self._env_max_memory_mb,
                 },
             )
 
