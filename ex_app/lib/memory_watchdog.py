@@ -60,18 +60,47 @@ def _get_current_rss_mb() -> float:
     return 0.0
 
 
+def _is_in_container() -> bool:
+    """Check if we're running inside a container.
+
+    Returns:
+        True if running in a container, False otherwise
+    """
+    # Check for /.dockerenv (Docker)
+    if os.path.exists("/.dockerenv"):
+        return True
+
+    # Check for container indicator in cgroup (works for Docker, Podman, etc.)
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            content = f.read()
+            # cgroup v2 shows "0::/" for containers with their own cgroup namespace
+            # cgroup v1 shows paths like "/docker/<id>" or "/lxc/<id>"
+            if "/docker/" in content or "/lxc/" in content or "/kubepods/" in content:
+                return True
+            # cgroup v2 with cgroup namespace - process 1 is at root of its namespace
+            if content.strip() == "0::/":
+                return True
+    except OSError:
+        pass
+
+    return False
+
+
 def _get_container_memory_limit_mb() -> float:
     """Get container memory limit in MB (from cgroups).
 
     Returns:
-        Memory limit in megabytes, or 0 if not in a container/no limit
+        Memory limit in megabytes, or 0 if no limit is set
+        Returns -1 if in a container but limit is "max" (unlimited)
     """
     # Try cgroup v2 first
     try:
         with open("/sys/fs/cgroup/memory.max", "r") as f:
             value = f.read().strip()
-            if value != "max":
-                return int(value) / (1024 * 1024)  # bytes to MB
+            if value == "max":
+                return -1.0  # Unlimited - signal that we're in a container but no limit
+            return int(value) / (1024 * 1024)  # bytes to MB
     except (OSError, ValueError):
         pass
 
@@ -80,8 +109,9 @@ def _get_container_memory_limit_mb() -> float:
         with open("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r") as f:
             value = int(f.read().strip())
             # Very large values mean "no limit"
-            if value < 9223372036854771712:  # Common "no limit" value
-                return value / (1024 * 1024)  # bytes to MB
+            if value >= 9223372036854771712:  # Common "no limit" value
+                return -1.0  # Unlimited
+            return value / (1024 * 1024)  # bytes to MB
     except (OSError, ValueError):
         pass
 
@@ -115,18 +145,31 @@ def _get_available_memory_mb() -> float:
     """Get available memory in MB.
 
     First checks container limits (cgroups), then falls back to host memory.
+    If running in a container with no memory limit, returns 0 (skip checks).
 
     Returns:
-        Available memory in megabytes, or 0 if unable to determine
+        Available memory in megabytes, or 0 if unable to determine or unlimited
     """
     # Check container memory first
     container_limit = _get_container_memory_limit_mb()
+
+    if container_limit == -1.0:
+        # Container with unlimited memory - don't apply system memory checks
+        # The container can use as much memory as needed
+        return 0.0
+
     if container_limit > 0:
         container_usage = _get_container_memory_usage_mb()
         if container_usage > 0:
             return container_limit - container_usage
 
-    # Fall back to host memory
+    # Only fall back to host memory if we're NOT in a container
+    # (reading /proc/meminfo from inside a container shows host memory,
+    # which is misleading when the container has no explicit limit)
+    if _is_in_container():
+        return 0.0
+
+    # Fall back to host memory (only when running directly on host)
     try:
         with open("/proc/meminfo", "r") as f:
             for line in f:
