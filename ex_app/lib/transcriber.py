@@ -20,6 +20,7 @@ from .constants import (
     MODAL_CONNECT_TIMEOUT,
     MODAL_KEY,
     MODAL_SECRET,
+    MODAL_STALE_TIMEOUT,
     MODAL_STT_HOST_SUFFIX,
     MODAL_WORKSPACE,
     WEBRTC_SAMPLE_RATE,
@@ -160,6 +161,12 @@ class ModalTranscriber:
         self._total_audio_bytes = 0
         self._first_audio_sent = False  # Track if we've logged first audio send
 
+        # Stale connection detection - track any message from server, not just transcripts
+        self._first_audio_sent_time = 0.0  # When we first sent audio
+        self._last_audio_sent_time = 0.0
+        self._last_message_time = 0.0  # Any message from Modal (ping, token, vad_end, etc.)
+        self._stale_warned = False
+
         logger.info(
             f"Created ModalTranscriber for session {session_id}, language={language}"
         )
@@ -258,6 +265,9 @@ class ModalTranscriber:
                     break
 
                 await self._process_and_send_audio(frame)
+
+                # Check for stale connection (audio being sent but no transcripts)
+                await self._check_stale_connection()
         except asyncio.CancelledError:
             logger.info("Audio send loop cancelled")
         except Exception as e:
@@ -268,6 +278,41 @@ class ModalTranscriber:
                 await audio_stream.stop()
             # Send any remaining buffered audio
             await self._flush_buffer()
+
+    async def _check_stale_connection(self) -> None:
+        """Check if connection appears stale (sending audio but no messages from server).
+
+        If audio has been sent for MODAL_STALE_TIMEOUT seconds without receiving
+        any messages (including pings, vad_end, etc.), log a warning. This helps
+        diagnose Modal issues while avoiding false positives during silence.
+        """
+        now = time.time()
+
+        # Only check if we've been actively sending audio recently (within last 5s)
+        if self._last_audio_sent_time == 0 or (now - self._last_audio_sent_time) > 5:
+            return
+
+        # Check if we've received ANY message from Modal (ping, token, vad_end, etc.)
+        # If user is silent, server should still send pings or vad_end messages
+        if self._last_message_time == 0:
+            # Never received any message - check how long we've been sending
+            if self._first_audio_sent_time > 0:
+                time_since_first_send = now - self._first_audio_sent_time
+                if time_since_first_send > MODAL_STALE_TIMEOUT and not self._stale_warned:
+                    logger.warning(
+                        f"Stale connection detected: Sent audio for {time_since_first_send:.1f}s "
+                        f"but no messages received from Modal. Server may be unresponsive."
+                    )
+                    self._stale_warned = True
+        else:
+            # We've received messages before - check if they stopped
+            time_since_message = now - self._last_message_time
+            if time_since_message > MODAL_STALE_TIMEOUT and not self._stale_warned:
+                logger.warning(
+                    f"Stale connection detected: No messages for {time_since_message:.1f}s "
+                    f"while audio is being sent. Modal may be unresponsive."
+                )
+                self._stale_warned = True
 
     async def _process_and_send_audio(self, frame_data: bytes) -> None:
         """Process audio frame and send to Modal when buffer is full.
@@ -326,6 +371,10 @@ class ModalTranscriber:
 
             # Send to Modal
             await self._ws.send(encoded)
+            now = time.time()
+            self._last_audio_sent_time = now
+            if self._first_audio_sent_time == 0:
+                self._first_audio_sent_time = now
 
             # Log first audio send at INFO level, rest at DEBUG
             if not self._first_audio_sent:
@@ -388,12 +437,14 @@ class ModalTranscriber:
             data = json.loads(message)
             msg_type = data.get("type")
 
+            # Track any message received to detect stale connections
+            self._last_message_time = time.time()
+
             if msg_type == "token":
                 text = data.get("text", "")
                 if text:
                     self._transcript_buffer.append(text)
                     # Log accumulated transcript every N seconds
-                    import time
                     now = time.time()
                     if now - self._last_transcript_log >= self._transcript_log_interval:
                         transcript = "".join(self._transcript_buffer)
