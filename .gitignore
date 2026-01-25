@@ -73,3 +73,6 @@ venv.bak/
 *.log
 .secrets
 DEPLOY.local.md
+uv.lock
+.envrc
+live_testing/node_modules/
