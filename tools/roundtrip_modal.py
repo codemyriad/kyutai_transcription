@@ -446,6 +446,21 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
                 data = json.loads(raw)
                 if label == "listener":
                     print(f"[listener][ws] {data}")
+                if data.get("type") == "event":
+                    # Track remote sessions from join/update events so we can target requestoffer correctly.
+                    evt = data.get("event", {})
+                    if evt.get("type") == "join":
+                        for entry in evt.get("join", []) or []:
+                            sid = entry.get("sessionid")
+                            if sid and sid != ctx.signaling_session:
+                                ctx.remote_sessions.add(sid)
+                    if evt.get("type") == "update":
+                        users = evt.get("update", {}).get("users") or []
+                        for user in users:
+                            sid = user.get("sessionId") or user.get("sessionid")
+                            if sid and sid != ctx.signaling_session:
+                                ctx.remote_sessions.add(sid)
+                    continue
                 if data.get("type") != "message":
                     continue
                 d = data["message"].get("data", {})
@@ -488,9 +503,18 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         send_task = asyncio.create_task(message_loop(sender, "publisher"))
         await make_offer(sender, "publisher")
         if receiver.features.get("mcu"):
-            # Mirror browser: request offer from remote participant session without sid.
-            for remote in receiver.remote_sessions:
-                await send_request_offer(receiver, remote)
+            # Mirror browser: request offer from remote participant sessions (no sid).
+            # Try all known remotes every few seconds until a subscribe sid is set.
+            async def _request_loop():
+                while not receiver.subscribe_sid:
+                    remotes = list(receiver.remote_sessions)
+                    if remotes:
+                        print(f"[listener] requesting offers from remotes: {remotes}")
+                    for remote in remotes:
+                        if remote != receiver.signaling_session:
+                            await send_request_offer(receiver, remote)
+                    await asyncio.sleep(5)
+            asyncio.create_task(_request_loop())
         await asyncio.sleep(duration)
         recv_task.cancel()
         send_task.cancel()
