@@ -1,6 +1,16 @@
 # Connecting to a public Nextcloud Talk room
 
-This documents the HTTP and signaling calls needed to join a public Talk room, post/read chat messages, and connect to the WebRTC call. All flows were validated against `https://cloud.codemyriad.io/call/erwcr27x` where the chat currently contains the message “I am human!” from **Human tester**.
+This is a self-contained summary of how to join `https://cloud.codemyriad.io/call/erwcr27x`, send/receive media, and what is still blocking a headless round-trip test.
+
+## Goal and current status
+- Goal: headless script joins the public room, streams `../kyutai_modal/test_audio.wav`, receives the room mix, and forwards the received audio to Modal to verify intelligibility.
+- Browser path (Playwright/Chrome, fake audio) works end-to-end. ICE succeeds via TURN.
+- Headless path (aiortc in `tools/roundtrip_modal.py`) authenticates, joins the call, publishes audio, and reaches `iceConnectionState=completed`, but never receives a downstream offer. `requestoffer` is rejected with `{"code":"not_allowed","message":"Not allowed to request offer."}` so the listener peer connection never gets a remote description. No audio reaches Modal because no remote track arrives.
+- TURN/STUN from `/signaling/settings` work (no 403/channel_bind). Example browser ICE pair: local relay `turn:cloud.codemyriad.io:3478` → `172.18.0.4:64521` (relay), remote host `172.18.0.4:54450`, RTT ~60 ms.
+
+Relevant scripts:
+- `tools/stream_audio_to_talk.py`: Playwright-based, publishes a WAV to the room (works).
+- `tools/roundtrip_modal.py`: aiortc-based, tries to publish + listen + stream to Modal (blocked on missing downstream offer).
 
 ## Prerequisites: cookies and CSRF token
 
@@ -144,20 +154,32 @@ To update call media flags without leaving, `PUT /ocs/v2.php/apps/spreed/api/v4/
 6) POST `/call/{token}` with flags (e.g., `3` for audio) to join the call.
 7) Exchange WebRTC offer/answer/ICE over the signaling WebSocket and stream audio.
 
-## Current state and blocker
+## Current blocker and why it matters
 
-- Browser path (Playwright, Chrome fake audio) works end-to-end on `https://cloud.codemyriad.io/call/erwcr27x` with no internal secret.
-- Headless path (aiortc/wrtc) now gets past TURN:
-  - HTTP bootstrap: fetch room page → cookies + `requesttoken`; `POST /room/{token}/participants/active` → `sessionId`; `GET /signaling/settings?token=erwcr27x` → signaling URL/auth + STUN/TURN; `POST /call/{token}` flags=3.
-  - Signaling: `hello` v2 → `sessionid` + features; send offer (with candidates) to own signaling session (MCU). MCU replies with answer + candidates; `iceConnectionState=completed` on the publish PC. TURN creds from settings work (no 403/channel_bind). Example browser ICE: local relay `turn:cloud.codemyriad.io:3478` → `172.18.0.4:64521` (relay), remote host `172.18.0.4:54450`, RTT ~60 ms, state `succeeded`.
-- Blocker: no downstream offers to subscribers. Signaling rejects `requestoffer` with `{"code":"not_allowed","message":"Not allowed to request offer."}`. The signaling WS never emits `offer` messages toward the listener session, even though `participants/update` shows all peers `inCall: 3`. Only control/mute/unmute/nick events arrive, so the listener PC never gets a remote description/track and Modal sees 0 bytes.
+- After joining the call as two guests (publisher + listener), the publisher sends an offer to its own signaling session (MCU) and receives an answer plus ICE candidates; ICE completes and audio is being sent.
+- The listener sends `{"type":"requestoffer","roomType":"video","sid":<sid>}` (and variants) to the publisher’s session id, but the server responds with `not_allowed` and never emits an `offer` toward the listener. As a result, the listener never gets a remote description/track and the Modal round-trip cannot be validated.
+- The signaling channel shows only control/mute/nick messages even though `participants/update` reports all peers `inCall: 3`.
 
-## What’s missing (for experts to investigate)
+## Hypotheses for the `not_allowed` gate (based on Talk signaling research)
 
-1) Capture the working browser’s signaling WS (`wss://cloud.codemyriad.io/standalone-signaling/spreed`) to see:
-   - Which sender session id issues downstream `offer` messages to a subscriber, and the `sid` values used.
-   - Whether the MCU sends offers unprompted or after a different trigger (not `requestoffer`).
-2) Identify the MCU session id (if any) and the exact message shape required for guests to receive offers.
-3) Explain/adjust the permission gate returning `not_allowed` on `requestoffer`; if another verb (e.g. `sendoffer`, `recipient-call`, or other control) is needed, document it.
+- It is application-layer, not a network block: TCP/WSS succeeds and `hello` is accepted (sessionid + features returned).
+- Possible state/protocol mismatch:
+  - The MCU may send offers automatically to subscribers without a `requestoffer`; if so, we need the exact trigger/sender session id used by the web client.
+  - `requestoffer` may be limited to certain client types or require a different `sid`/`roomType` payload than we send.
+  - If the server thinks the subscriber is not fully joined/in call, it rejects media actions (`not_allowed` is the generic enforcement).
+- Less likely here (but common causes): Origin/Host mismatch in reverse proxy, signaling secret mismatch, or backend auth failure. These appear unlikely because `hello`, `room`, and `/call` all succeed and TURN is usable.
+- Other known `not_allowed` causes from HPB research (keep in mind when comparing with server logs/config):
+  - Reverse proxy origin/Host mismatch → CSWSH protection rejects the request.
+  - Signaling secret mismatch between HPB and Nextcloud (`config.php` vs `server.conf`).
+  - HPB failing to call back into Nextcloud because of `allow_local_remote_servers=false` or DNS/hairpin issues (`Host violates local access rules`).
+  - Reusing an expired Janus handle/session id after restarts.
 
-Until those details are known, the reliable route is browser-driven (Playwright) for publish/listen; headless clients can publish but cannot receive because downstream offers are missing.***
+## What experts should capture next
+
+1) Capture the working browser signaling frames on `wss://cloud.codemyriad.io/standalone-signaling/spreed`:
+   - Sender session id(s) that deliver `offer` to new subscribers.
+   - Exact payload (including `sid`, `roomType`, `clientType`, etc.) preceding the downstream offer. Confirm whether the browser sends `requestoffer` or relies on server-initiated offers.
+2) Map MCU/session ids: is there a distinct MCU session to target, or do offers arrive from another participant session?
+3) Identify the permission check that returns `not_allowed` for `requestoffer` in this deployment (likely in the HPB signaling server). Determine the allowed verb/payload for guest subscribers.
+
+Until that is known, Playwright/browser automation is the reliable path for media; headless clients can publish but cannot receive because the subscriber offer never arrives.
