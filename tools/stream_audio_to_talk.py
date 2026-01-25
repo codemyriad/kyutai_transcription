@@ -21,6 +21,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, Page
 
@@ -77,7 +78,59 @@ async def _ensure_mic_unmuted(page: Page) -> None:
         return
 
 
-async def stream_audio(url: str, nickname: str, audio_path: Path, duration: int, headless: bool) -> None:
+async def _start_call_if_idle(page: Page) -> None:
+    """If the room is idle, click the call start/join button."""
+    button_labels = (
+        "Start call",
+        "Start a call",
+        "Join call",
+        "Enter call",
+        "Join video call",
+        "Join audio call",
+        "Call",
+    )
+    for label in button_labels:
+        try:
+            btn = page.get_by_role("button", name=label, exact=False)
+            if await btn.is_visible():
+                await btn.click()
+                return
+        except Exception:
+            continue
+
+
+def _parse_cookies(cookie_args: list[str], url: str) -> list[dict]:
+    """Convert name=value strings into Playwright cookie dicts."""
+    if not cookie_args:
+        return []
+    parsed = urlparse(url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    cookies = []
+    for raw in cookie_args:
+        if "=" not in raw:
+            continue
+        name, value = raw.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "url": base_url,
+                "secure": True,
+            }
+        )
+    return cookies
+
+
+async def stream_audio(
+    url: str,
+    nickname: str,
+    audio_path: Path,
+    duration: int,
+    headless: bool,
+    cookies: list[str],
+) -> None:
     audio_path = audio_path.expanduser().resolve()
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -94,6 +147,8 @@ async def stream_audio(url: str, nickname: str, audio_path: Path, duration: int,
             permissions=["microphone", "camera"],
             viewport={"width": 1280, "height": 720},
         )
+        if cookies:
+            await context.add_cookies(_parse_cookies(cookies, url))
         page = await context.new_page()
 
         print(f"Opening {url}")
@@ -106,6 +161,7 @@ async def stream_audio(url: str, nickname: str, audio_path: Path, duration: int,
         # Wait for call UI to load
         try:
             await page.wait_for_timeout(1000)
+            await _start_call_if_idle(page)
             await _ensure_mic_unmuted(page)
         except Exception:
             pass
@@ -125,6 +181,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--audio", required=True, help="Path to PCM WAV audio file.")
     parser.add_argument("--duration", type=int, default=120, help="Seconds to stay in the call (default: 120).")
     parser.add_argument("--headful", action="store_true", help="Show the browser (headless by default).")
+    parser.add_argument(
+        "--cookie",
+        action="append",
+        default=[],
+        help="Optional cookie in name=value form (repeatable) for authenticated rooms.",
+    )
     return parser.parse_args(argv)
 
 
@@ -138,6 +200,7 @@ def main(argv: list[str]) -> int:
                 audio_path=Path(args.audio),
                 duration=args.duration,
                 headless=not args.headful,
+                cookies=args.cookie,
             )
         )
     except Exception as exc:
