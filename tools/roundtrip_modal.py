@@ -254,6 +254,7 @@ async def create_participant(label: str, room_url: str) -> ParticipantContext:
 
 async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str) -> None:
     hello_version = "2.0" if ctx.settings["helloAuthParams"].get("2.0") else "1.0"
+    features = ["chat-relay", "encryption"]
     msg = {
         "type": "hello",
         "hello": {
@@ -262,6 +263,7 @@ async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: st
                 "url": f"{base_url}/ocs/v2.php/apps/spreed/api/v3/signaling/backend",
                 "params": ctx.settings["helloAuthParams"][hello_version],
             },
+            "features": features,
         },
     }
     await ctx.ws.send(json.dumps(msg))
