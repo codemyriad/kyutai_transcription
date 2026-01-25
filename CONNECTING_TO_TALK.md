@@ -4,6 +4,7 @@ Self-contained notes on how to join as a headless client, publish/receive audio,
 
 ## Current status
 - Audio **works** with the aiortc client in `tools/roundtrip_modal.py` using the signaling **internal secret**. The publisher sends `../nc-modal-captions/test_audio_short.wav`, the listener receives the mix, and other room participants hear it.
+- Captions now **work end-to-end** via the script by relaying Modal transcripts back into Talk signaling (`type:"transcript"` messages) to all known room sessions. Run the command below and you should see captions for the bot in the room UI.
 - Command that works today:
   ```
   source .envrc                    # provides TALK_INTERNAL_SECRET + backend URL
@@ -54,3 +55,4 @@ Self-contained notes on how to join as a headless client, publish/receive audio,
 - `ex_app/lib/main.py`: FastAPI endpoints; guarded by `AppAPIAuthMiddleware`.
 - `ex_app/lib/service.py` and `ex_app/lib/spreed_client.py`: how the ExApp connects to HPB and forwards transcripts.
 - `research_on_talk_connection.md`: background on HPB/Nextcloud signalling, common `not_allowed` causes, and reverse-proxy pitfalls.
+- Script-side captions: `tools/roundtrip_modal.py` now listens to Modal tokens, flushes on `vad_end`, and injects `type:"transcript"` signaling messages to all known remote sessions. This sidesteps the ExApp when it fails to transcribe the bot.

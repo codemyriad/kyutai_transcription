@@ -125,15 +125,17 @@ class ParticipantContext:
 
 
 class ModalStreamer:
-    """Send received audio frames to Modal and print transcripts."""
+    """Send received audio frames to Modal and emit transcripts."""
 
-    def __init__(self, workspace: str, key: str, secret: str) -> None:
+    def __init__(self, workspace: str, key: str, secret: str, on_transcript: Optional[callable] = None) -> None:
         self.workspace = workspace
         self.key = key
         self.secret = secret
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.url = f"wss://{workspace}--kyutai-stt-rust-kyutaisttrustservice-serve.modal.run/v1/stream"
         self.bytes_sent = 0
+        self._buf: list[str] = []
+        self._on_transcript = on_transcript
 
     async def connect(self) -> None:
         headers = {"Modal-Key": self.key, "Modal-Secret": self.secret}
@@ -158,8 +160,13 @@ class ModalStreamer:
                 continue
             if data.get("type") == "token":
                 print(data.get("text", ""), end="", flush=True)
+                self._buf.append(data.get("text", ""))
             elif data.get("type") == "vad_end":
                 print()
+                text = "".join(self._buf).strip()
+                self._buf = []
+                if text and self._on_transcript:
+                    await self._on_transcript(text, True)
             elif data.get("type") == "error":
                 print(f"[modal] error: {data.get('message')}")
 
@@ -170,6 +177,12 @@ class ModalStreamer:
         self.bytes_sent += len(pcm_f32_mono)
 
     async def close(self) -> None:
+        # Flush any buffered text on shutdown
+        if self._buf and self._on_transcript:
+            text = "".join(self._buf).strip()
+            self._buf = []
+            if text:
+                await self._on_transcript(text, True)
         if self.ws:
             await self.ws.close()
             self.ws = None
@@ -417,7 +430,24 @@ async def roundtrip(
     base_url, room_token = _parse_room_url(room_url)
     sender = await create_participant("publisher", room_url)
     receiver = await create_participant("listener", room_url)
-    modal = ModalStreamer(modal_workspace, modal_key, modal_secret)
+    async def send_transcript_message(text: str, final: bool) -> None:
+        # Broadcast transcript to all known remote sessions (other participants).
+        recipients = list(receiver.remote_sessions)
+        if not recipients:
+            print(f"[transcript] no recipients yet, skipping text='{text}'")
+            return
+        for sess in recipients:
+            payload = {
+                "type": "transcript",
+                "message": text,
+                "langId": transcription_lang or "en",
+                "speakerSessionId": sender.signaling_session,
+                "final": final,
+            }
+            await receiver.ws.send(json.dumps(_message(sess, payload)))
+        print(f"[transcript] sent to {len(recipients)} recipients: {text}")
+
+    modal = ModalStreamer(modal_workspace, modal_key, modal_secret, on_transcript=send_transcript_message)
 
     try:
         print(f"[publisher] sessionId={sender.participant['sessionId']}")
@@ -484,10 +514,9 @@ async def roundtrip(
         async def _sub_ice():
             print(f"[listener] iceGatheringState -> {receiver.pc.iceGatheringState}")
 
-        # Modal hook
+        # Modal hook (use listener audio only to avoid double feeding)
         await modal.connect()
         resampler = av.audio.resampler.AudioResampler(format="fltp", layout="mono", rate=24000)
-        resampler_pub = av.audio.resampler.AudioResampler(format="fltp", layout="mono", rate=24000)
 
         @receiver.pc.on("track")
         async def _on_track(track):
@@ -500,23 +529,6 @@ async def roundtrip(
                 except Exception:
                     break
                 for resampled in resampler.resample(frame):
-                    pcm = resampled.to_ndarray().tobytes()
-                    try:
-                        await modal.send_audio(pcm)
-                    except ConnectionClosed:
-                        return
-
-        @sender.pc.on("track")
-        async def _on_track_pub(track):
-            print(f"[publisher] track received: {track.kind}")
-            if track.kind != "audio":
-                return
-            while True:
-                try:
-                    frame = await track.recv()
-                except Exception:
-                    break
-                for resampled in resampler_pub.resample(frame):
                     pcm = resampled.to_ndarray().tobytes()
                     try:
                         await modal.send_audio(pcm)
