@@ -144,10 +144,20 @@ To update call media flags without leaving, `PUT /ocs/v2.php/apps/spreed/api/v4/
 6) POST `/call/{token}` with flags (e.g., `3` for audio) to join the call.
 7) Exchange WebRTC offer/answer/ICE over the signaling WebSocket and stream audio.
 
-## Notes from scripted clients
+## Current state and blocker
 
-- Browser automation (Playwright) succeeds against `https://cloud.codemyriad.io/call/erwcr27x` with no internal secret when using Chrome fake audio.
-- Headless WebRTC (aiortc/wrtc) now authenticates, joins the call, and builds a publish PC to the MCU using the STUN/TURN settings from `/signaling/settings`; ICE completes and the MCU returns an answer/candidates. TURN is accepted with the provided creds (no more 403/channel_bind) and `iceConnectionState` reaches `completed` on the publish PC.
-- Downstream media still missing: the signaling server rejects `requestoffer` with `{"code":"not_allowed","message":"Not allowed to request offer."}` and never emits `offer` messages toward subscribers, even while `participants/update` shows all peers `inCall: 3`. Only control/unmute/mute/nick events are seen on the signaling WS.
-- Working browser candidate pair (DevTools): local relay `turn:cloud.codemyriad.io:3478` → `172.18.0.4:64521` (relay), remote host `172.18.0.4:54450`, RTT ~60 ms, state `succeeded`.
-- Next steps for the headless client: capture the signaling WebSocket frames from the working browser (offers/answers/`sid` values and sender session ids) to mirror the MCU->subscriber negotiation, or identify and hardcode the correct MCU session id to accept offers. Until that is understood, the reliable path is browser-driven (Playwright) for publishing and listening.
+- Browser path (Playwright, Chrome fake audio) works end-to-end on `https://cloud.codemyriad.io/call/erwcr27x` with no internal secret.
+- Headless path (aiortc/wrtc) now gets past TURN:
+  - HTTP bootstrap: fetch room page → cookies + `requesttoken`; `POST /room/{token}/participants/active` → `sessionId`; `GET /signaling/settings?token=erwcr27x` → signaling URL/auth + STUN/TURN; `POST /call/{token}` flags=3.
+  - Signaling: `hello` v2 → `sessionid` + features; send offer (with candidates) to own signaling session (MCU). MCU replies with answer + candidates; `iceConnectionState=completed` on the publish PC. TURN creds from settings work (no 403/channel_bind). Example browser ICE: local relay `turn:cloud.codemyriad.io:3478` → `172.18.0.4:64521` (relay), remote host `172.18.0.4:54450`, RTT ~60 ms, state `succeeded`.
+- Blocker: no downstream offers to subscribers. Signaling rejects `requestoffer` with `{"code":"not_allowed","message":"Not allowed to request offer."}`. The signaling WS never emits `offer` messages toward the listener session, even though `participants/update` shows all peers `inCall: 3`. Only control/mute/unmute/nick events arrive, so the listener PC never gets a remote description/track and Modal sees 0 bytes.
+
+## What’s missing (for experts to investigate)
+
+1) Capture the working browser’s signaling WS (`wss://cloud.codemyriad.io/standalone-signaling/spreed`) to see:
+   - Which sender session id issues downstream `offer` messages to a subscriber, and the `sid` values used.
+   - Whether the MCU sends offers unprompted or after a different trigger (not `requestoffer`).
+2) Identify the MCU session id (if any) and the exact message shape required for guests to receive offers.
+3) Explain/adjust the permission gate returning `not_allowed` on `requestoffer`; if another verb (e.g. `sendoffer`, `recipient-call`, or other control) is needed, document it.
+
+Until those details are known, the reliable route is browser-driven (Playwright) for publish/listen; headless clients can publish but cannot receive because downstream offers are missing.***
