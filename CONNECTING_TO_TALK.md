@@ -183,3 +183,14 @@ To update call media flags without leaving, `PUT /ocs/v2.php/apps/spreed/api/v4/
 3) Identify the permission check that returns `not_allowed` for `requestoffer` in this deployment (likely in the HPB signaling server). Determine the allowed verb/payload for guest subscribers.
 
 Until that is known, Playwright/browser automation is the reliable path for media; headless clients can publish but cannot receive because the subscriber offer never arrives.
+
+## Browser signaling capture (Chrome DevTools, public call reload)
+
+Captured from the running Chrome (devtools WS `wss://cloud.codemyriad.io/standalone-signaling/spreed`, with a page reload to force a fresh handshake):
+- `hello` v2 → server replies with `sessionid = onBdp_vjPu_rJYaZgY4sbHxYumKfP3wGgDDsNBQeTVh8PVVGMlZSWjVGV2FJUE5QbDh4LXFhSTFCOVd2dk5vczlyZVBRM19DalBVdEJpaV9qQWxZVVJLMGttTXMyfDg2MDI3Mzk2NzE=`.
+- Sent `room` join with `roomid: erwcr27x` and `sessionid` equal to the HTTP `/participants/active` session (`k/3DCcYOH+5AEvCDRy8RC8Vww2Vvcdgp+2qhg2sXQlb9DESzh0Eri0O9ZTS/y28YDcEF34Y6QG2m6+rcMSg9GouOhirJCyzXVsAMxuxddDxlFlhCIYXAl0WU00WfgjIPxl55wKgGi3/g4Dpctd7kMmglZRbiZWcyqSVEQAFTT/fAyoWgysqCktKrWakZ7WmBxciRieJsy5yIBv1Nz0Ti95HX6Rdz9NXgYD/cDukkH24bkF2CPPy30BLc9Wh6q4K`).
+- Participants present after join: self (sessionid above) and `Human tester` with signaling sessionid `bvWra8CGd9fH1oYOl4hS1imPxjuLg_rcjb0NNJfLT2t8PThCcFQ0MVo0NEFjRHpodTctSjRqNjF2QlZQVjN2MXJiLUhEVHdtYlJZakJNWmV0TjN4Z2M2YWNUY2YyfDQzMzE3Mzk2NzE=` and `inCall: 3`.
+- Upstream publish: browser sends a burst of `message` frames to its *own* sessionid with `sid = 1769372072442` (roomType `video`) followed by a server answer/candidates. This matches the “offer to MCU” step.
+- Downstream subscribe: browser sends `requestoffer` (roomType `video`, **no sid**) to the other participant sessionid (`bvWra8CGd9fH1oYOl4hS1...`). The server responds from that sessionid with WebRTC negotiation messages (offer/candidates not fully expanded in the truncated log), and the browser answers using a new `sid = 8443238136283536`. Control frames (mute/unmute/nickChanged) also use the same session addressing.
+
+Implication: the working browser targets `requestoffer` at the remote participant sessionid (not at its own session/MFU). Replicating this pattern—including separate sids for upstream/downstream—may avoid the `not_allowed` rejection seen in the headless client.
