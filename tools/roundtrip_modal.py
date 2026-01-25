@@ -255,12 +255,18 @@ async def create_participant(label: str, room_url: str) -> ParticipantContext:
 async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str) -> None:
     hello_version = "2.0" if ctx.settings["helloAuthParams"].get("2.0") else "1.0"
     features = ["chat-relay", "encryption"]
+    # Use base backend URL to avoid double-appending PathToOcsSignalingBackend on the server.
+    raw_auth_url = ctx.settings["helloAuthParams"][hello_version].get("url") or f"{base_url}/ocs/v2.php/apps/spreed/api/v3/signaling/backend"
+    from urllib.parse import urlparse
+    parsed_auth = urlparse(raw_auth_url)
+    # Ensure a trailing "/" so server-side path concatenation stays correct.
+    base_backend = f"{parsed_auth.scheme}://{parsed_auth.netloc}/"
     msg = {
         "type": "hello",
         "hello": {
             "version": hello_version,
             "auth": {
-                "url": f"{base_url}/ocs/v2.php/apps/spreed/api/v3/signaling/backend",
+                "url": base_backend,
                 "params": ctx.settings["helloAuthParams"][hello_version],
             },
             "features": features,
