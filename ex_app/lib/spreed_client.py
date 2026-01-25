@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+import gc
 import json
 import logging
 import threading
@@ -746,6 +747,10 @@ class SpreedClient:
             self._server = None
 
         self.defunct.set()
+
+        # Force garbage collection to release memory from aiortc/numpy
+        gc.collect()
+
         if not app_closing:
             await self.leave_call_cb(self.room_token)
 
@@ -1128,6 +1133,9 @@ class SpreedClient:
         Args:
             message: Offer message from HPB
         """
+        if self.defunct.is_set():
+            return
+
         spkr_sid = message["message"]["sender"]["sessionid"]
         async with self.peer_connection_lock:
             if (
@@ -1247,8 +1255,18 @@ class SpreedClient:
 
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+
+        # Check if client is still active before sending answer
+        if self.defunct.is_set():
+            logger.debug(
+                "Client defunct before sending answer, cleaning up",
+                extra={"session_id": spkr_sid, "room_token": self.room_token},
+            )
+            await pc.close()
+            return
+
         await self.send_offer_answer(
-            message["message"]["data"]["from"],
+            spkr_sid,
             message["message"]["data"]["sid"],
             answer.sdp,
         )
@@ -1264,6 +1282,8 @@ class SpreedClient:
         local_sdp = pc.localDescription.sdp
         for line in local_sdp.splitlines():
             if line.startswith("a=candidate:"):
+                if self.defunct.is_set():
+                    break
                 await self.send_candidate(
                     message["message"]["sender"]["sessionid"],
                     message["message"]["data"]["sid"],

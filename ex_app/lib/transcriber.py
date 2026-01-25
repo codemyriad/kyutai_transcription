@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gc
 import logging
 import os
 import shutil
@@ -213,23 +214,24 @@ class ModalTranscriber:
             logger.warning("Transcriber already running")
             return
 
-        # Create debug audio directory
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self._debug_audio_dir = Path(f"/tmp/audio_debug/{timestamp}_{self.session_id}")
-        self._debug_audio_dir.mkdir(parents=True, exist_ok=True)
-        # Write metadata file for playback (WebRTC typically delivers stereo)
-        metadata_file = self._debug_audio_dir / "README.txt"
-        with open(metadata_file, "w") as f:
-            f.write(f"Audio capture for session: {self.session_id}\n")
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write("Format: Raw PCM, 16-bit signed little-endian\n")
-            f.write(f"Sample rate: {WEBRTC_SAMPLE_RATE} Hz\n")
-            f.write("Channels: 2 (stereo, WebRTC default)\n")
-            f.write("\nTo play with ffplay:\n")
-            f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 audio_raw.pcm\n")
-            f.write("\nTo convert to WAV:\n")
-            f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 -i audio_raw.pcm audio.wav\n")
-        logger.info(f"Saving debug audio to {self._debug_audio_dir}")
+        # Create debug audio directory only if explicitly enabled
+        if os.environ.get("SAVE_DEBUG_AUDIO"):
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self._debug_audio_dir = Path(f"/tmp/audio_debug/{timestamp}_{self.session_id}")
+            self._debug_audio_dir.mkdir(parents=True, exist_ok=True)
+            # Write metadata file for playback (WebRTC typically delivers stereo)
+            metadata_file = self._debug_audio_dir / "README.txt"
+            with open(metadata_file, "w") as f:
+                f.write(f"Audio capture for session: {self.session_id}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write("Format: Raw PCM, 16-bit signed little-endian\n")
+                f.write(f"Sample rate: {WEBRTC_SAMPLE_RATE} Hz\n")
+                f.write("Channels: 2 (stereo, WebRTC default)\n")
+                f.write("\nTo play with ffplay:\n")
+                f.write(f"  ffplay -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 audio_raw.pcm\n")
+                f.write("\nTo convert to WAV:\n")
+                f.write(f"  ffmpeg -f s16le -ar {WEBRTC_SAMPLE_RATE} -ac 2 -i audio_raw.pcm audio.wav\n")
+            logger.info(f"Saving debug audio to {self._debug_audio_dir}")
 
         # Connect to Modal first (this can take time for cold start)
         await self.connect()
@@ -493,6 +495,9 @@ class ModalTranscriber:
             except Exception as e:
                 logger.warning(f"Failed to clean up debug audio: {e}")
         self._debug_audio_dir = None
+
+        # Force garbage collection to release numpy arrays and buffers
+        gc.collect()
 
         logger.info(f"Transcriber stopped for session {self.session_id}")
 
