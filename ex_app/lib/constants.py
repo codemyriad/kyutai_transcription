@@ -47,6 +47,7 @@ HPB_CONNECT_TIMEOUT = 60
 HPB_PING_TIMEOUT = 120
 HPB_SHUTDOWN_TIMEOUT = 30
 MODAL_CONNECT_TIMEOUT = 120  # Allow time for Modal cold start
+MODAL_STALE_TIMEOUT = 30  # Reconnect if no transcripts received for this long
 CALL_LEAVE_TIMEOUT = 2  # Short delay - allows initial setup but stops quickly
 
 # Retry configuration
