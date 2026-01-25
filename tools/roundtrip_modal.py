@@ -117,6 +117,7 @@ class ParticipantContext:
     ws: websockets.WebSocketClientProtocol
     pc: RTCPeerConnection
     publish_sid: str
+    expected_publisher: Optional[str] = None
     subscribe_sid: Optional[str] = None
     remote_sessions: set[str] = field(default_factory=set)
 
@@ -252,26 +253,49 @@ async def create_participant(label: str, room_url: str) -> ParticipantContext:
     )
 
 
-async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str) -> None:
+async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str, internal_secret: Optional[str] = None, internal_backend: Optional[str] = None) -> None:
     hello_version = "2.0" if ctx.settings["helloAuthParams"].get("2.0") else "1.0"
     features = ["chat-relay", "encryption"]
-    # Use base backend URL to avoid double-appending PathToOcsSignalingBackend on the server.
-    raw_auth_url = ctx.settings["helloAuthParams"][hello_version].get("url") or f"{base_url}/ocs/v2.php/apps/spreed/api/v3/signaling/backend"
-    from urllib.parse import urlparse
-    parsed_auth = urlparse(raw_auth_url)
-    # Ensure a trailing "/" so server-side path concatenation stays correct.
-    base_backend = f"{parsed_auth.scheme}://{parsed_auth.netloc}/"
-    msg = {
-        "type": "hello",
-        "hello": {
-            "version": hello_version,
-            "auth": {
-                "url": base_backend,
-                "params": ctx.settings["helloAuthParams"][hello_version],
+    if internal_secret:
+        import hmac
+        import secrets
+        random = secrets.token_hex(24)  # 48 chars like server RandomString(48)
+        token = hmac.new(internal_secret.encode(), random.encode(), "sha256").hexdigest()
+        backend_url = internal_backend or base_url
+        if not backend_url.endswith("/"):
+            backend_url += "/"
+        msg = {
+            "type": "hello",
+            "hello": {
+                "version": "1.0",
+                "auth": {
+                    "type": "internal",
+                    "params": {
+                        "random": random,
+                        "token": token,
+                        "backend": backend_url,
+                    },
+                },
+                "features": features,
             },
-            "features": features,
-        },
-    }
+        }
+    else:
+        # Use base backend URL to avoid double-appending PathToOcsSignalingBackend on the server.
+        from urllib.parse import urlparse
+        raw_auth_url = ctx.settings["helloAuthParams"][hello_version].get("url") or f"{base_url}/ocs/v2.php/apps/spreed/api/v3/signaling/backend"
+        parsed_auth = urlparse(raw_auth_url)
+        base_backend = f"{parsed_auth.scheme}://{parsed_auth.netloc}/"
+        msg = {
+            "type": "hello",
+            "hello": {
+                "version": hello_version,
+                "auth": {
+                    "url": base_backend,
+                    "params": ctx.settings["helloAuthParams"][hello_version],
+                },
+                "features": features,
+            },
+        }
     await ctx.ws.send(json.dumps(msg))
     async for raw in ctx.ws:
         data = json.loads(raw)
@@ -348,7 +372,7 @@ async def send_request_offer(source: ParticipantContext, recipient_session: str,
     print(f"[{source.label}] requested offer from {recipient_session}")
 
 
-async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_workspace: str, modal_key: str, modal_secret: str, ice_overrides: dict | None = None) -> None:
+async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_workspace: str, modal_key: str, modal_secret: str, ice_overrides: dict | None = None, internal_secret: Optional[str] = None, internal_backend: Optional[str] = None) -> None:
     base_url, room_token = _parse_room_url(room_url)
     sender = await create_participant("publisher", room_url)
     receiver = await create_participant("listener", room_url)
@@ -358,16 +382,20 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         print(f"[publisher] sessionId={sender.participant['sessionId']}")
         print(f"[listener] sessionId={receiver.participant['sessionId']}")
         # Hello + room join
-        await signaling_hello(sender, base_url, room_token)
-        await signaling_hello(receiver, base_url, room_token)
+        await signaling_hello(sender, base_url, room_token, internal_secret=internal_secret, internal_backend=internal_backend)
+        await signaling_hello(receiver, base_url, room_token, internal_secret=internal_secret, internal_backend=internal_backend)
         print("[signaling] both participants joined room")
         receiver.remote_sessions.add(sender.signaling_session)
         sender.remote_sessions.add(receiver.signaling_session)
+        receiver.expected_publisher = sender.signaling_session
 
         # Attach publisher media
         player = MediaPlayer(audio_path.as_posix(), loop=True)
         sender.pc.addTrack(player.audio)
         receiver.pc.addTransceiver("audio", direction="recvonly")
+        receiver.pc.addTransceiver("video", direction="recvonly")
+        # Create a data channel so answers can match m=application sections in incoming offers.
+        receiver.pc.createDataChannel("data")
         # Override ICE servers if provided
         if ice_overrides:
             override_cfg = {"iceServers": _build_ice_servers(sender.settings, ice_overrides)}
@@ -482,6 +510,8 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
                     print(f"[{label}] answer applied from {sender_id}")
                 elif mtype == "offer":
                     # Offers arriving here are downstream (listener) offers; track separate sid.
+                    if ctx.expected_publisher and sender_id != ctx.expected_publisher:
+                        continue
                     if msg_sid and msg_sid != ctx.subscribe_sid:
                         ctx.subscribe_sid = msg_sid
                     sdp = d["payload"]["sdp"]
@@ -511,16 +541,13 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         send_task = asyncio.create_task(message_loop(sender, "publisher"))
         await make_offer(sender, "publisher")
         if receiver.features.get("mcu"):
-            # Mirror browser: request offer from remote participant sessions (no sid).
-            # Try all known remotes every few seconds until a subscribe sid is set.
+            # Request an offer only from our publisher session to avoid subscribing to other participants.
             async def _request_loop():
                 while not receiver.subscribe_sid:
-                    remotes = list(receiver.remote_sessions)
-                    if remotes:
-                        print(f"[listener] requesting offers from remotes: {remotes}")
-                    for remote in remotes:
-                        if remote != receiver.signaling_session:
-                            await send_request_offer(receiver, remote)
+                    target = receiver.expected_publisher
+                    if target:
+                        print(f"[listener] requesting offer from publisher session: {target}")
+                        await send_request_offer(receiver, target)
                     await asyncio.sleep(5)
             asyncio.create_task(_request_loop())
         await asyncio.sleep(duration)
@@ -549,6 +576,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--turn-url", action="append", default=[], help="Override TURN URL (repeatable).")
     parser.add_argument("--turn-username", help="Override TURN username.")
     parser.add_argument("--turn-credential", help="Override TURN credential.")
+    parser.add_argument("--internal-secret", help="Use signaling internal auth (HMAC) with this secret to bypass in-call checks.")
+    parser.add_argument("--internal-backend", help="Backend URL for internal auth (defaults to room host).")
     return parser.parse_args(argv)
 
 
@@ -591,6 +620,8 @@ def main(argv: list[str]) -> int:
                 modal_key=key,
                 modal_secret=secret,
                 ice_overrides=ice_overrides,
+                internal_secret=args.internal_secret,
+                internal_backend=args.internal_backend,
             )
         )
     except Exception as exc:
