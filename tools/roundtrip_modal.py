@@ -21,7 +21,7 @@ import re
 import sys
 import uuid
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -116,7 +116,9 @@ class ParticipantContext:
     call_join: dict
     ws: websockets.WebSocketClientProtocol
     pc: RTCPeerConnection
-    sid: str
+    publish_sid: str
+    subscribe_sid: Optional[str] = None
+    remote_sessions: set[str] = field(default_factory=set)
 
 
 class ModalStreamer:
@@ -246,7 +248,7 @@ async def create_participant(label: str, room_url: str) -> ParticipantContext:
         call_join=call_join,
         ws=ws,
         pc=pc,
-        sid=sid,
+        publish_sid=sid,
     )
 
 
@@ -290,7 +292,7 @@ def _message(recipient_session: str, data: dict) -> dict:
 async def send_offer(source: ParticipantContext, recipient_session: str, offer_sdp: str, sid: Optional[str] = None) -> None:
     payload = {
         "to": recipient_session,
-        "sid": sid or source.sid,
+        "sid": sid or source.publish_sid,
         "roomType": "video",
         "type": "offer",
         "payload": {"type": "offer", "sdp": offer_sdp, "nick": source.label},
@@ -301,7 +303,7 @@ async def send_offer(source: ParticipantContext, recipient_session: str, offer_s
 async def send_answer(source: ParticipantContext, recipient_session: str, answer_sdp: str, sid: Optional[str] = None) -> None:
     payload = {
         "to": recipient_session,
-        "sid": sid or source.sid,
+        "sid": sid or source.subscribe_sid or source.publish_sid,
         "roomType": "video",
         "type": "answer",
         "payload": {"type": "answer", "sdp": answer_sdp},
@@ -322,7 +324,7 @@ async def send_candidate(source: ParticipantContext, recipient_session: str, can
     }
     data = {
         "to": recipient_session,
-        "sid": sid or source.sid,
+        "sid": sid or source.subscribe_sid or source.publish_sid,
         "roomType": "video",
         "type": "candidate",
         "payload": payload,
@@ -334,8 +336,6 @@ async def send_request_offer(source: ParticipantContext, recipient_session: str,
     if not recipient_session:
         return
     payload = {"type": "requestoffer", "roomType": "video"}
-    if sid:
-        payload["sid"] = sid
     await source.ws.send(json.dumps(_message(recipient_session, payload)))
     print(f"[{source.label}] requested offer from {recipient_session}")
 
@@ -353,6 +353,8 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         await signaling_hello(sender, base_url, room_token)
         await signaling_hello(receiver, base_url, room_token)
         print("[signaling] both participants joined room")
+        receiver.remote_sessions.add(sender.signaling_session)
+        sender.remote_sessions.add(receiver.signaling_session)
 
         # Attach publisher media
         player = MediaPlayer(audio_path.as_posix(), loop=True)
@@ -375,7 +377,8 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         async def _send_candidate_receiver(event):
             if event.candidate:
                 print("[listener] sending candidate")
-                await send_candidate(receiver, receiver.signaling_session, event.candidate)
+                target_sid = receiver.subscribe_sid or receiver.publish_sid
+                await send_candidate(receiver, receiver.signaling_session, event.candidate, sid=target_sid)
 
         @sender.pc.on("connectionstatechange")
         async def _pub_state():
@@ -450,23 +453,24 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
                 mtype = d.get("type")
                 msg_sid = d.get("sid")
                 if mtype == "answer":
-                    if msg_sid and msg_sid != ctx.sid:
+                    if msg_sid and msg_sid not in {ctx.subscribe_sid, ctx.publish_sid}:
                         continue
                     await ctx.pc.setRemoteDescription(RTCSessionDescription(sdp=d["payload"]["sdp"], type="answer"))
                     print(f"[{label}] answer applied from {sender_id}")
                 elif mtype == "offer":
-                    if msg_sid and msg_sid != ctx.sid:
-                        ctx.sid = msg_sid
+                    # Offers arriving here are downstream (listener) offers; track separate sid.
+                    if msg_sid and msg_sid != ctx.subscribe_sid:
+                        ctx.subscribe_sid = msg_sid
                     sdp = d["payload"]["sdp"]
                     await ctx.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="offer"))
                     answer = await ctx.pc.createAnswer()
                     await ctx.pc.setLocalDescription(answer)
                     await wait_ice_complete(ctx.pc)
                     log_sdp_candidates(f"{label}-answer", ctx.pc.localDescription.sdp)
-                    await send_answer(ctx, sender_id, ctx.pc.localDescription.sdp, msg_sid or ctx.sid)
+                    await send_answer(ctx, sender_id, ctx.pc.localDescription.sdp, msg_sid or ctx.subscribe_sid)
                     print(f"[{label}] sent answer to {sender_id}")
                 elif mtype == "candidate":
-                    if msg_sid and msg_sid != ctx.sid:
+                    if msg_sid and msg_sid not in {ctx.subscribe_sid, ctx.publish_sid}:
                         continue
                     cand = d.get("payload", {}).get("candidate")
                     if cand and cand.get("candidate"):
@@ -484,7 +488,9 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         send_task = asyncio.create_task(message_loop(sender, "publisher"))
         await make_offer(sender, "publisher")
         if receiver.features.get("mcu"):
-            await send_request_offer(receiver, sender.signaling_session)
+            # Mirror browser: request offer from remote participant session without sid.
+            for remote in receiver.remote_sessions:
+                await send_request_offer(receiver, remote)
         await asyncio.sleep(duration)
         recv_task.cancel()
         send_task.cancel()

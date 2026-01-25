@@ -194,3 +194,7 @@ Captured from the running Chrome (devtools WS `wss://cloud.codemyriad.io/standal
 - Downstream subscribe: browser sends `requestoffer` (roomType `video`, **no sid**) to the other participant sessionid (`bvWra8CGd9fH1oYOl4hS1...`). The server responds from that sessionid with WebRTC negotiation messages (offer/candidates not fully expanded in the truncated log), and the browser answers using a new `sid = 8443238136283536`. Control frames (mute/unmute/nickChanged) also use the same session addressing.
 
 Implication: the working browser targets `requestoffer` at the remote participant sessionid (not at its own session/MFU). Replicating this pattern—including separate sids for upstream/downstream—may avoid the `not_allowed` rejection seen in the headless client.
+
+## Script change in progress (aiortc)
+- `tools/roundtrip_modal.py` now tracks separate sids for publish vs subscribe and keeps a list of remote participant session ids from the room join. The listener sends `requestoffer` (no sid) to each remote session id (mirrors browser) and accepts a downstream sid distinct from the publish sid. Candidates/answers for downstream offers use `subscribe_sid`.
+- Next step to validate: run the script against the room and confirm whether `requestoffer` is still rejected or if downstream offers arrive. If still blocked, compare payloads with the captured browser frames (clientType, roomType, missing fields).
