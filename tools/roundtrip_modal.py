@@ -34,6 +34,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 from aiortc.sdp import candidate_from_sdp
 from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaPlayer
+from websockets.exceptions import ConnectionClosed
 import os
 
 
@@ -120,6 +121,7 @@ class ParticipantContext:
     expected_publisher: Optional[str] = None
     subscribe_sid: Optional[str] = None
     remote_sessions: set[str] = field(default_factory=set)
+    transcripts: list[dict] = field(default_factory=list)
 
 
 class ModalStreamer:
@@ -253,6 +255,33 @@ async def create_participant(label: str, room_url: str) -> ParticipantContext:
     )
 
 
+async def enable_transcription(ctx: ParticipantContext, base_url: str, room_token: str, language: Optional[str] = None) -> None:
+    """Enable Talk live transcription through the OCS API using the participant session."""
+    language = language or "en"
+    try:
+        resp = await _ocs_post(
+            ctx.session,
+            base_url,
+            f"/ocs/v2.php/apps/spreed/api/v1/live-transcription/{room_token}/language?format=json",
+            {"languageId": language},
+            ctx.requesttoken,
+        )
+        print(f"[{ctx.label}] set transcription language to {language} (response={resp})")
+    except Exception as exc:  # noqa: BLE001 - best-effort for now
+        print(f"[{ctx.label}] failed to set transcription language: {exc}")
+    try:
+        resp = await _ocs_post(
+            ctx.session,
+            base_url,
+            f"/ocs/v2.php/apps/spreed/api/v1/live-transcription/{room_token}?format=json",
+            {},
+            ctx.requesttoken,
+        )
+        print(f"[{ctx.label}] live transcription enabled (response={resp})")
+    except Exception as exc:  # noqa: BLE001 - best-effort for now
+        print(f"[{ctx.label}] failed to enable live transcription: {exc}")
+
+
 async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str, internal_secret: Optional[str] = None, internal_backend: Optional[str] = None) -> None:
     hello_version = "2.0" if ctx.settings["helloAuthParams"].get("2.0") else "1.0"
     features = ["chat-relay", "encryption"]
@@ -372,7 +401,19 @@ async def send_request_offer(source: ParticipantContext, recipient_session: str,
     print(f"[{source.label}] requested offer from {recipient_session}")
 
 
-async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_workspace: str, modal_key: str, modal_secret: str, ice_overrides: dict | None = None, internal_secret: Optional[str] = None, internal_backend: Optional[str] = None) -> None:
+async def roundtrip(
+    room_url: str,
+    audio_path: Path,
+    duration: int,
+    modal_workspace: str,
+    modal_key: str,
+    modal_secret: str,
+    ice_overrides: dict | None = None,
+    internal_secret: Optional[str] = None,
+    internal_backend: Optional[str] = None,
+    enable_transcriptions: bool = False,
+    transcription_lang: Optional[str] = None,
+) -> None:
     base_url, room_token = _parse_room_url(room_url)
     sender = await create_participant("publisher", room_url)
     receiver = await create_participant("listener", room_url)
@@ -389,11 +430,14 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         sender.remote_sessions.add(receiver.signaling_session)
         receiver.expected_publisher = sender.signaling_session
 
+        if enable_transcriptions:
+            # Enable on the listener so transcripts are sent back to the receiving client.
+            await enable_transcription(receiver, base_url, room_token, language=transcription_lang)
+
         # Attach publisher media
         player = MediaPlayer(audio_path.as_posix(), loop=True)
         sender.pc.addTrack(player.audio)
         receiver.pc.addTransceiver("audio", direction="recvonly")
-        receiver.pc.addTransceiver("video", direction="recvonly")
         # Create a data channel so answers can match m=application sections in incoming offers.
         receiver.pc.createDataChannel("data")
         # Override ICE servers if provided
@@ -451,10 +495,16 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
             if track.kind != "audio":
                 return
             while True:
-                frame = await track.recv()
+                try:
+                    frame = await track.recv()
+                except Exception:
+                    break
                 for resampled in resampler.resample(frame):
                     pcm = resampled.to_ndarray().tobytes()
-                    await modal.send_audio(pcm)
+                    try:
+                        await modal.send_audio(pcm)
+                    except ConnectionClosed:
+                        return
 
         @sender.pc.on("track")
         async def _on_track_pub(track):
@@ -462,10 +512,16 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
             if track.kind != "audio":
                 return
             while True:
-                frame = await track.recv()
+                try:
+                    frame = await track.recv()
+                except Exception:
+                    break
                 for resampled in resampler_pub.resample(frame):
                     pcm = resampled.to_ndarray().tobytes()
-                    await modal.send_audio(pcm)
+                    try:
+                        await modal.send_audio(pcm)
+                    except ConnectionClosed:
+                        return
 
         async def make_offer(ctx: ParticipantContext, label: str, recipient: Optional[str] = None, sid: Optional[str] = None) -> None:
             offer = await ctx.pc.createOffer()
@@ -534,6 +590,19 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
                         print(f"[{label}] added remote candidate from {sender_id}")
                 elif mtype == "requestoffer":
                     await make_offer(ctx, label, recipient=sender_id, sid=msg_sid or ctx.sid)
+                elif mtype == "transcript":
+                    transcript = {
+                        "speaker": d.get("speakerSessionId"),
+                        "lang": d.get("langId"),
+                        "final": d.get("final", True),
+                        "message": d.get("message"),
+                    }
+                    ctx.transcripts.append(transcript)
+                    status = "final" if transcript["final"] else "partial"
+                    print(
+                        f"[{label}] transcript ({status}) lang={transcript['lang']} "
+                        f"speaker={transcript['speaker']}: {transcript['message']}"
+                    )
                 else:
                     print(f"[{label}] unhandled message type {mtype} sid={msg_sid} from {sender_id}")
 
@@ -564,6 +633,14 @@ async def roundtrip(room_url: str, audio_path: Path, duration: int, modal_worksp
         await receiver.ws.close()
         await sender.session.close()
         await receiver.session.close()
+        total_transcripts = len(sender.transcripts) + len(receiver.transcripts)
+        if total_transcripts:
+            print(f"[transcripts] received {total_transcripts} messages")
+            for idx, transcript in enumerate(receiver.transcripts[:5]):
+                print(
+                    f"  [{idx+1}] ({'final' if transcript.get('final', True) else 'partial'}) "
+                    f"{transcript.get('lang')} {transcript.get('speaker')}: {transcript.get('message')}"
+                )
         print(f"[stats] sent {modal.bytes_sent} bytes to Modal")
 
 
@@ -578,6 +655,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--turn-credential", help="Override TURN credential.")
     parser.add_argument("--internal-secret", help="Use signaling internal auth (HMAC) with this secret to bypass in-call checks.")
     parser.add_argument("--internal-backend", help="Backend URL for internal auth (defaults to room host).")
+    parser.add_argument("--enable-transcription", action="store_true", help="Enable Talk live transcription for the listener session.")
+    parser.add_argument("--transcription-lang", default="en", help="Transcription language code (default: en).")
     return parser.parse_args(argv)
 
 
@@ -622,6 +701,8 @@ def main(argv: list[str]) -> int:
                 ice_overrides=ice_overrides,
                 internal_secret=args.internal_secret,
                 internal_backend=args.internal_backend,
+                enable_transcriptions=args.enable_transcription,
+                transcription_lang=args.transcription_lang,
             )
         )
     except Exception as exc:
