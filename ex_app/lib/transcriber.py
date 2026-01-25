@@ -161,9 +161,10 @@ class ModalTranscriber:
         self._total_audio_bytes = 0
         self._first_audio_sent = False  # Track if we've logged first audio send
 
-        # Stale connection detection
+        # Stale connection detection - track any message from server, not just transcripts
+        self._first_audio_sent_time = 0.0  # When we first sent audio
         self._last_audio_sent_time = 0.0
-        self._last_transcript_time = 0.0
+        self._last_message_time = 0.0  # Any message from Modal (ping, token, vad_end, etc.)
         self._stale_warned = False
 
         logger.info(
@@ -279,34 +280,36 @@ class ModalTranscriber:
             await self._flush_buffer()
 
     async def _check_stale_connection(self) -> None:
-        """Check if connection appears stale (sending audio but no transcripts).
+        """Check if connection appears stale (sending audio but no messages from server).
 
         If audio has been sent for MODAL_STALE_TIMEOUT seconds without receiving
-        any transcripts, log a warning. This helps diagnose Modal issues.
+        any messages (including pings, vad_end, etc.), log a warning. This helps
+        diagnose Modal issues while avoiding false positives during silence.
         """
         now = time.time()
 
-        # Only check if we've been sending audio for a while
+        # Only check if we've been actively sending audio recently (within last 5s)
         if self._last_audio_sent_time == 0 or (now - self._last_audio_sent_time) > 5:
             return
 
-        # If we've never received a transcript and been sending for a while
-        if self._last_transcript_time == 0 and self._first_audio_sent:
-            time_since_first_send = now - self._last_audio_sent_time + (
-                MODAL_STALE_TIMEOUT if self._stale_warned else 0
-            )
-            if time_since_first_send > MODAL_STALE_TIMEOUT and not self._stale_warned:
+        # Check if we've received ANY message from Modal (ping, token, vad_end, etc.)
+        # If user is silent, server should still send pings or vad_end messages
+        if self._last_message_time == 0:
+            # Never received any message - check how long we've been sending
+            if self._first_audio_sent_time > 0:
+                time_since_first_send = now - self._first_audio_sent_time
+                if time_since_first_send > MODAL_STALE_TIMEOUT and not self._stale_warned:
+                    logger.warning(
+                        f"Stale connection detected: Sent audio for {time_since_first_send:.1f}s "
+                        f"but no messages received from Modal. Server may be unresponsive."
+                    )
+                    self._stale_warned = True
+        else:
+            # We've received messages before - check if they stopped
+            time_since_message = now - self._last_message_time
+            if time_since_message > MODAL_STALE_TIMEOUT and not self._stale_warned:
                 logger.warning(
-                    f"Stale connection detected: Sent audio for {MODAL_STALE_TIMEOUT}s "
-                    f"but no transcripts received. Modal may be unresponsive."
-                )
-                self._stale_warned = True
-        # If we were receiving transcripts but they stopped
-        elif self._last_transcript_time > 0:
-            time_since_transcript = now - self._last_transcript_time
-            if time_since_transcript > MODAL_STALE_TIMEOUT and not self._stale_warned:
-                logger.warning(
-                    f"Stale connection detected: No transcripts for {time_since_transcript:.1f}s "
+                    f"Stale connection detected: No messages for {time_since_message:.1f}s "
                     f"while audio is being sent. Modal may be unresponsive."
                 )
                 self._stale_warned = True
@@ -368,7 +371,10 @@ class ModalTranscriber:
 
             # Send to Modal
             await self._ws.send(encoded)
-            self._last_audio_sent_time = time.time()
+            now = time.time()
+            self._last_audio_sent_time = now
+            if self._first_audio_sent_time == 0:
+                self._first_audio_sent_time = now
 
             # Log first audio send at INFO level, rest at DEBUG
             if not self._first_audio_sent:
@@ -431,13 +437,14 @@ class ModalTranscriber:
             data = json.loads(message)
             msg_type = data.get("type")
 
+            # Track any message received to detect stale connections
+            self._last_message_time = time.time()
+
             if msg_type == "token":
                 text = data.get("text", "")
                 if text:
                     self._transcript_buffer.append(text)
-                    self._last_transcript_time = time.time()
                     # Log accumulated transcript every N seconds
-                    import time
                     now = time.time()
                     if now - self._last_transcript_log >= self._transcript_log_interval:
                         transcript = "".join(self._transcript_buffer)
