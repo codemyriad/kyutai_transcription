@@ -749,11 +749,6 @@ def main(argv: list[str]) -> int:
     workspace = os.environ.get("MODAL_WORKSPACE")
     key = os.environ.get("MODAL_KEY")
     secret = os.environ.get("MODAL_SECRET")
-    # Default internal secret/backend from env if provided
-    if not args.internal_secret:
-        args.internal_secret = os.environ.get("TALK_INTERNAL_SECRET")
-    if not args.internal_backend:
-        args.internal_backend = os.environ.get("TALK_BACKEND_URL")
     if not (workspace and key and secret):
         # Fallback: load from common .envrc locations if env not exported
         for env_file in ("../kyutai_modal/.envrc", ".envrc"):

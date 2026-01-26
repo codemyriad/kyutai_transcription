@@ -5,6 +5,7 @@ Self-contained notes on how to join as a headless client, publish/receive audio,
 ## Current status
 - Audio **works** with the aiortc client in `tools/roundtrip_modal.py` using the signaling **internal secret**. The publisher sends `../nc-modal-captions/test_audio_short.wav`, the listener receives the mix, and other room participants hear it.
 - Captions now **work end-to-end** via the script by relaying Modal transcripts back into Talk signaling (`type:"transcript"` messages) to all known room sessions. Run the command below and you should see captions for the bot in the room UI.
+- Target goal: make the headless client behave exactly like a browser guest (no internal secret); internal auth is only a fallback when the HPB rejects guest `requestoffer`. If you must use the fallback, pass `--internal-secret` explicitly.
 - Command that works today:
   ```
   source .envrc                    # provides TALK_INTERNAL_SECRET + backend URL
@@ -13,10 +14,9 @@ Self-contained notes on how to join as a headless client, publish/receive audio,
     --room-url https://cloud.codemyriad.io/call/erwcr27x \
     --audio ../nc-modal-captions/test_audio_short.wav \
     --duration 20 \
-    --internal-secret "$TALK_INTERNAL_SECRET" \
     --enable-transcription
-  ```
-  Notes: the script auto-loads Modal creds from the two `.envrc` files if not exported; `--internal-secret` triggers the HPB internal auth flow (HMAC(random, secret)).
+```
+Notes: the script auto-loads Modal creds from the two `.envrc` files if not exported; `--internal-secret` triggers the HPB internal auth flow (HMAC(random, secret)).
 - Signaling behaviour in the script:
   - Fetches cookies/requesttoken from the room page, then calls `/room/{token}/participants/active` to get the Nextcloud sessionId (roomsession id).
   - WebSocket hello uses internal auth to avoid “not in same call” checks; joins the room with the roomsession id.
