@@ -727,8 +727,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--turn-url", action="append", default=[], help="Override TURN URL (repeatable).")
     parser.add_argument("--turn-username", help="Override TURN username.")
     parser.add_argument("--turn-credential", help="Override TURN credential.")
-    parser.add_argument("--internal-secret", help="Use signaling internal auth (HMAC) with this secret to bypass in-call checks.")
-    parser.add_argument("--internal-backend", help="Backend URL for internal auth (defaults to room host).")
+    parser.add_argument("--internal-secret", help="Use signaling internal auth (HMAC) with this secret to bypass in-call checks (defaults to TALK_INTERNAL_SECRET).")
+    parser.add_argument("--internal-backend", help="Backend URL for internal auth (defaults to TALK_BACKEND_URL or room host).")
     parser.add_argument("--enable-transcription", action="store_true", help="Enable Talk live transcription for the listener session.")
     parser.add_argument("--transcription-lang", default="en", help="Transcription language code (default: en).")
     parser.add_argument("--publisher-name", default="speaker guest", help="Display name for the publishing participant.")
@@ -749,6 +749,11 @@ def main(argv: list[str]) -> int:
     workspace = os.environ.get("MODAL_WORKSPACE")
     key = os.environ.get("MODAL_KEY")
     secret = os.environ.get("MODAL_SECRET")
+    # Default internal secret/backend from env if provided
+    if not args.internal_secret:
+        args.internal_secret = os.environ.get("TALK_INTERNAL_SECRET")
+    if not args.internal_backend:
+        args.internal_backend = os.environ.get("TALK_BACKEND_URL")
     if not (workspace and key and secret):
         # Fallback: load from common .envrc locations if env not exported
         for env_file in ("../kyutai_modal/.envrc", ".envrc"):
