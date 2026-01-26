@@ -93,6 +93,21 @@ async def _ocs_delete(session: aiohttp.ClientSession, base: str, path: str, toke
     return data["ocs"]["data"] or {}
 
 
+async def set_guest_name(ctx: ParticipantContext, base_url: str, room_token: str, display_name: str) -> None:
+    """Set the guest display name (best-effort)."""
+    try:
+        await _ocs_post(
+            ctx.session,
+            base_url,
+            f"/ocs/v2.php/apps/spreed/api/v1/guest/{room_token}/name?format=json",
+            {"displayName": display_name},
+            ctx.requesttoken,
+        )
+        print(f"[{ctx.label}] set guest name to '{display_name}'")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{ctx.label}] failed to set guest name: {exc}")
+
+
 def _build_ice_servers(settings: dict, overrides: dict | None = None) -> list[dict]:
     if overrides:
         servers: list[RTCIceServer] = []
@@ -134,6 +149,7 @@ class ParticipantContext:
     subscribe_sid: Optional[str] = None
     remote_sessions: set[str] = field(default_factory=set)
     transcripts: list[dict] = field(default_factory=list)
+    known_sessions: set[str] = field(default_factory=set)
 
 
 class ModalStreamer:
@@ -456,16 +472,18 @@ async def roundtrip(
     internal_backend: Optional[str] = None,
     enable_transcriptions: bool = False,
     transcription_lang: Optional[str] = None,
+    publisher_name: Optional[str] = None,
+    listener_name: Optional[str] = None,
 ) -> None:
     base_url, room_token = _parse_room_url(room_url)
     sender = await create_participant("publisher", room_url)
     receiver = await create_participant("listener", room_url)
     async def send_transcript_message(text: str, final: bool) -> None:
         # Broadcast transcript to all known remote sessions (other participants).
-        recipients = list(receiver.remote_sessions)
+        recipients = list(receiver.remote_sessions or receiver.known_sessions)
         if not recipients:
             await asyncio.sleep(2)
-            recipients = list(receiver.remote_sessions)
+            recipients = list(receiver.remote_sessions or receiver.known_sessions)
         if not recipients:
             print(f"[transcript] no recipients yet, skipping text='{text}'")
             return
@@ -485,6 +503,10 @@ async def roundtrip(
     try:
         print(f"[publisher] sessionId={sender.participant['sessionId']}")
         print(f"[listener] sessionId={receiver.participant['sessionId']}")
+        if publisher_name:
+            await set_guest_name(sender, base_url, room_token, publisher_name)
+        if listener_name:
+            await set_guest_name(receiver, base_url, room_token, listener_name)
         # Hello + room join
         await signaling_hello(sender, base_url, room_token, internal_secret=internal_secret, internal_backend=internal_backend)
         await signaling_hello(receiver, base_url, room_token, internal_secret=internal_secret, internal_backend=internal_backend)
@@ -591,6 +613,7 @@ async def roundtrip(
                             sid = entry.get("sessionid")
                             if sid and sid != ctx.signaling_session:
                                 ctx.remote_sessions.add(sid)
+                                ctx.known_sessions.add(sid)
                         print(f"[{label}] tracked remote sessions: {len(ctx.remote_sessions)}")
                     if evt.get("type") == "update":
                         users = evt.get("update", {}).get("users") or []
@@ -598,6 +621,7 @@ async def roundtrip(
                             sid = user.get("sessionId") or user.get("sessionid")
                             if sid and sid != ctx.signaling_session:
                                 ctx.remote_sessions.add(sid)
+                                ctx.known_sessions.add(sid)
                         print(f"[{label}] tracked remote sessions: {len(ctx.remote_sessions)}")
                     continue
                 if data.get("type") != "message":
@@ -706,6 +730,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--internal-backend", help="Backend URL for internal auth (defaults to room host).")
     parser.add_argument("--enable-transcription", action="store_true", help="Enable Talk live transcription for the listener session.")
     parser.add_argument("--transcription-lang", default="en", help="Transcription language code (default: en).")
+    parser.add_argument("--publisher-name", default="speaker guest", help="Display name for the publishing participant.")
+    parser.add_argument("--listener-name", default="listener guest", help="Display name for the listening participant.")
     return parser.parse_args(argv)
 
 
@@ -752,6 +778,8 @@ def main(argv: list[str]) -> int:
                 internal_backend=args.internal_backend,
                 enable_transcriptions=args.enable_transcription,
                 transcription_lang=args.transcription_lang,
+                publisher_name=args.publisher_name,
+                listener_name=args.listener_name,
             )
         )
     except Exception as exc:
