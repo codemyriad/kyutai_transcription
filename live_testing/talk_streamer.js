@@ -3,8 +3,9 @@
  * Stream a local audio file into a Nextcloud Talk room using Node.js + wrtc.
  *
  * Env vars:
- *   ROOM_URL     Full Talk room URL (preferred, e.g. https://cloud.codemyriad.io/call/erwcr27x)
- *   BASE_URL     Base Nextcloud URL (fallback if ROOM_URL unset)
+ *   ROOM_URL     Full Talk room URL (preferred, e.g. $NEXTCLOUD_ROOM_URL)
+ *   NEXTCLOUD_ROOM_URL Optional alias for ROOM_URL
+ *   BASE_URL     Base Nextcloud URL (fallback if ROOM_URL unset; NEXTCLOUD_URL is also checked)
  *   ROOM_TOKEN   Talk room token (fallback if ROOM_URL unset)
  *   AUDIO_FILE   Path to WAV/PCM audio to send
  *   NICKNAME     Optional display name (used in nickChanged/status messages)
@@ -21,8 +22,8 @@ const { RTCPeerConnection, RTCSessionDescription, nonstandard } = require('wrtc'
 
 const { RTCAudioSource } = nonstandard;
 
-const ROOM_URL = process.env.ROOM_URL;
-const fallbackBase = process.env.BASE_URL || 'https://cloud.codemyriad.io';
+const ROOM_URL = process.env.ROOM_URL || process.env.NEXTCLOUD_ROOM_URL;
+const fallbackBase = process.env.BASE_URL || process.env.NEXTCLOUD_URL || 'https://example.com';
 const fallbackRoom = process.env.ROOM_TOKEN || 'erwcr27x';
 const audioCandidates = [
   process.env.AUDIO_FILE,

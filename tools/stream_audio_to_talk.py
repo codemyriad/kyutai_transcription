@@ -5,7 +5,7 @@ Requirements:
 
 Usage:
     uv run --with playwright stream_audio_to_talk.py \
-        --url https://cloud.codemyriad.io/call/erwcr27x \
+        --url "$NEXTCLOUD_ROOM_URL" \
         --nickname "Bot 1" \
         --audio /path/to/audio.wav \
         --duration 120

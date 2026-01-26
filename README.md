@@ -59,7 +59,7 @@ Nextcloud AIO comes with a pre-configured Docker daemon called `docker_aio`. Reg
 docker exec --user www-data -it nextcloud-aio-nextcloud php occ app_api:app:register \
     live_transcription docker_aio \
     --info-xml https://raw.githubusercontent.com/codemyriad/live_transcription/main/appinfo/info.xml \
-    --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
+    --env "LT_HPB_URL=${NEXTCLOUD_URL}/standalone-signaling/spreed" \
     --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
     --env "MODAL_KEY=your-modal-key" \
@@ -89,7 +89,7 @@ Then register the ExApp (replace `docker_local` with your daemon name if differe
 ```bash
 occ app_api:app:register live_transcription docker_local \
     --info-xml https://raw.githubusercontent.com/codemyriad/live_transcription/main/appinfo/info.xml \
-    --env "LT_HPB_URL=wss://your-nextcloud-domain/standalone-signaling/spreed" \
+    --env "LT_HPB_URL=${NEXTCLOUD_URL}/standalone-signaling/spreed" \
     --env "LT_INTERNAL_SECRET=your-hpb-internal-secret" \
     --env "MODAL_WORKSPACE=your-modal-workspace" \
     --env "MODAL_KEY=your-modal-key" \
@@ -213,7 +213,7 @@ pip install -e ".[dev]"
 3. Set environment variables:
 
 ```bash
-export LT_HPB_URL=wss://your-hpb/spreed
+export LT_HPB_URL=$NEXTCLOUD_URL/standalone-signaling/spreed
 export LT_INTERNAL_SECRET=your-secret
 export MODAL_WORKSPACE=your-workspace
 export MODAL_KEY=your-key

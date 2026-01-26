@@ -414,7 +414,11 @@ async def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stream audio file into a Nextcloud Talk room")
-    parser.add_argument("--base-url", default="https://cloud.codemyriad.io", help="Nextcloud base URL")
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("NEXTCLOUD_URL", "https://example.com"),
+        help="Nextcloud base URL (defaults to NEXTCLOUD_URL env var)",
+    )
     parser.add_argument("--room", default="erwcr27x", help="Room token")
     parser.add_argument("--audio", required=True, help="Path to WAV/Opus/etc. audio file")
     parser.add_argument("--duration", type=int, default=60, help="Seconds to stay connected (audio loops)")

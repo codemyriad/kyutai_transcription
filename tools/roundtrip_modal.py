@@ -9,7 +9,7 @@ Requirements:
 
 Usage:
   uv run python tools/roundtrip_modal.py \\
-      --room-url https://cloud.codemyriad.io/call/erwcr27x \\
+      --room-url "$NEXTCLOUD_ROOM_URL" \\
       --audio ../kyutai_modal/test_audio.wav \\
       --duration 30
 """

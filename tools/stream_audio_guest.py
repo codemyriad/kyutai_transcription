@@ -5,7 +5,7 @@ Default audio is ../kyutai_modal/test_audio.wav (relative to repo root).
 Usage:
     uv run --with playwright playwright install chromium   # first time only
     uv run --with playwright python tools/stream_audio_guest.py \
-        --url https://cloud.codemyriad.io/call/erwcr27x \
+        --url "$NEXTCLOUD_ROOM_URL" \
         --nickname "Bot 1" \
         --duration 60
 

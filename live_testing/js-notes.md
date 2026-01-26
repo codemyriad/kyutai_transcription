@@ -25,7 +25,7 @@ const { RTCAudioSource } = wrtc.nonstandard;
 
 // --- CONFIGURATION ---
 const AUDIO_FILE = 'audio.mp3'; // Ensure this file exists
-const SIGNALING_URL = 'wss://your-nextcloud-instance/signaling/url'; 
+const SIGNALING_URL = `${process.env.NEXTCLOUD_URL}/standalone-signaling/spreed`; 
 const ROOM_TOKEN = 'your_token';
 
 // 1. Setup the "Virtual Microphone"

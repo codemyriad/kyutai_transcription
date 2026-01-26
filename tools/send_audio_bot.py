@@ -3,7 +3,7 @@ Join a public Nextcloud Talk room via signaling (no browser) and publish a WAV f
 
 Usage:
   uv run python tools/send_audio_bot.py \\
-      --room-url https://cloud.codemyriad.io/call/erwcr27x \\
+      --room-url "$NEXTCLOUD_ROOM_URL" \\
       --audio /path/to/audio.wav \\
       --nickname "Bot" \\
       --duration 90

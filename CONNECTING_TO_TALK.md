@@ -1,21 +1,21 @@
-# Connecting to the public Talk room (`https://cloud.codemyriad.io/call/erwcr27x`)
+# Connecting to a public Talk room
 
-Self-contained notes on how to join as a headless client, publish/receive audio, and the remaining gap for live captions.
+Self-contained notes on how to join as a headless client, publish/receive audio, and the current gaps for live captions.
 
 ## Current status
-- Audio **works** with the aiortc client in `tools/roundtrip_modal.py` using the signaling **internal secret**. The publisher sends `../nc-modal-captions/test_audio_short.wav`, the listener receives the mix, and other room participants hear it.
-- Captions now **work end-to-end** via the script by relaying Modal transcripts back into Talk signaling (`type:"transcript"` messages) to all known room sessions. Run the command below and you should see captions for the bot in the room UI.
-- Target goal: make the headless client behave exactly like a browser guest (no internal secret); internal auth is only a fallback when the HPB rejects guest `requestoffer`. If you must use the fallback, pass `--internal-secret` explicitly.
-- Command that works today:
+- Audio **worked previously** with the aiortc client in `tools/roundtrip_modal.py` using the signaling **internal secret**, but the latest runs no longer surface transcripts in Talk. Keep expectations low until we debug the regression.
+- Caption relay from Modal back into Talk (script-side `type:"transcript"` messages) is **currently unreliable**; Modal tokens print locally but do not appear in the Talk UI.
+- Target goal: make the headless client behave exactly like a browser guest (no internal secret); internal auth remains a fallback when the HPB rejects guest `requestoffer`. If you must use the fallback, pass `--internal-secret` explicitly.
+- Example command (requires `NEXTCLOUD_ROOM_URL=https://.../call/<token>`):
   ```
   source .envrc                    # provides TALK_INTERNAL_SECRET + backend URL
   source ../kyutai_modal/.envrc    # provides MODAL_* for STT
   uv run python tools/roundtrip_modal.py \
-    --room-url https://cloud.codemyriad.io/call/erwcr27x \
+    --room-url "$NEXTCLOUD_ROOM_URL" \
     --audio ../nc-modal-captions/test_audio_short.wav \
     --duration 20 \
     --enable-transcription
-```
+  ```
 Notes: the script auto-loads Modal creds from the two `.envrc` files if not exported; `--internal-secret` triggers the HPB internal auth flow (HMAC(random, secret)).
 - Signaling behaviour in the script:
   - Fetches cookies/requesttoken from the room page, then calls `/room/{token}/participants/active` to get the Nextcloud sessionId (roomsession id).
@@ -25,15 +25,15 @@ Notes: the script auto-loads Modal creds from the two `.envrc` files if not expo
 - Modal bytes-sent is non-zero and human users confirmed hearing the sample. Modal’s own transcripts print to stdout; Talk/HPB captions are still missing (see below).
 
 ## HTTP/OCS endpoints you need
-- Page load (cookies + CSRF): GET `https://cloud.codemyriad.io/call/erwcr27x`, extract `data-requesttoken`.
+- Page load (cookies + CSRF): GET `$NEXTCLOUD_ROOM_URL`, extract `data-requesttoken`.
 - Active participant (roomsession id): POST `/ocs/v2.php/apps/spreed/api/v4/room/{token}/participants/active?format=json` with body `{"force":true}` and headers `OCS-APIREQUEST:true`, `requesttoken:<token>`.
 - Signaling settings (WS endpoint, TURN/STUN, hello auth): GET `/ocs/v2.php/apps/spreed/api/v3/signaling/settings?format=json&token={token}`.
 - Enter call: POST `/ocs/v2.php/apps/spreed/api/v4/call/{token}?format=json` with `{"flags":3,"silent":false,"recordingConsent":false,"silentFor":[]}` (flags=3 means in-call + audio).
 
 ## WebSocket hello/auth
-- Normal flow: `hello` v2 with `auth.url` = backend URL (`https://cloud.codemyriad.io/ocs/v2.php/apps/spreed/api/v3/signaling/backend`) and `auth.params` = `helloAuthParams["2.0"]` from settings. HPB verifies via Nextcloud.
+- Normal flow: `hello` v2 with `auth.url` = backend URL (`$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v3/signaling/backend`) and `auth.params` = `helloAuthParams["2.0"]` from settings. HPB verifies via Nextcloud. (If only `NEXTCLOUD_ROOM_URL` is set, use its origin as `$NEXTCLOUD_URL`.)
 - Internal flow (what we use): `hello.version="1.0"`, `auth.type="internal"`, params `{random:<48 hex>, token: HMAC(secret, random), backend:<room origin + trailing slash>}`. This skips backend pings that currently return “not in same call” for guests.
-- After `hello` the client sends `{type:"room", room:{roomid:"erwcr27x", sessionid:<roomsession id>}}`.
+- After `hello` the client sends `{type:"room", room:{roomid:"<token>", sessionid:<roomsession id>}}`.
 
 ## Live transcription (Talk side)
 - API to toggle: POST `/ocs/v2.php/apps/spreed/api/v1/live-transcription/{token}?format=json` (no body). Requires the same cookies/requesttoken as other OCS calls.

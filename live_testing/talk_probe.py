@@ -182,7 +182,11 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Probe a public Nextcloud Talk room")
-    parser.add_argument("--base-url", default="https://cloud.codemyriad.io", help="Nextcloud base URL")
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("NEXTCLOUD_URL", "https://example.com"),
+        help="Nextcloud base URL (defaults to NEXTCLOUD_URL env var)",
+    )
     parser.add_argument("--room", default="erwcr27x", help="Room token")
     parser.add_argument("--name", default="CLI Bot", help="Display name when sending a message")
     parser.add_argument("--message", help="Optional message to send")
