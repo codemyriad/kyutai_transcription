@@ -81,6 +81,18 @@ async def _ocs_get(session: aiohttp.ClientSession, base: str, path: str, params:
         return await resp.json()
 
 
+async def _ocs_delete(session: aiohttp.ClientSession, base: str, path: str, token: str) -> dict:
+    async with session.delete(
+        f"{base}{path}",
+        headers={
+            "OCS-APIREQUEST": "true",
+            "requesttoken": token,
+        },
+    ) as resp:
+        data = await resp.json()
+    return data["ocs"]["data"] or {}
+
+
 def _build_ice_servers(settings: dict, overrides: dict | None = None) -> list[dict]:
     if overrides:
         servers: list[RTCIceServer] = []
@@ -293,6 +305,24 @@ async def enable_transcription(ctx: ParticipantContext, base_url: str, room_toke
         print(f"[{ctx.label}] live transcription enabled (response={resp})")
     except Exception as exc:  # noqa: BLE001 - best-effort for now
         print(f"[{ctx.label}] failed to enable live transcription: {exc}")
+
+
+async def leave_call(ctx: ParticipantContext, base_url: str, room_token: str) -> None:
+    """Leave the call and signal bye to clear ghost participants."""
+    try:
+        await _ocs_delete(
+            ctx.session,
+            base_url,
+            f"/ocs/v2.php/apps/spreed/api/v4/call/{room_token}?format=json",
+            ctx.requesttoken,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{ctx.label}] failed to leave call via OCS: {exc}")
+    try:
+        if ctx.ws and not ctx.ws.closed:
+            await ctx.ws.send(json.dumps({"type": "bye", "bye": {}}))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{ctx.label}] failed to send bye: {exc}")
 
 
 async def signaling_hello(ctx: ParticipantContext, base_url: str, room_token: str, internal_secret: Optional[str] = None, internal_backend: Optional[str] = None) -> None:
@@ -641,6 +671,8 @@ async def roundtrip(
         await modal.close()
         await sender.pc.close()
         await receiver.pc.close()
+        await leave_call(sender, base_url, room_token)
+        await leave_call(receiver, base_url, room_token)
         await sender.ws.close()
         await receiver.ws.close()
         await sender.session.close()
