@@ -319,7 +319,7 @@ async def leave_call(ctx: ParticipantContext, base_url: str, room_token: str) ->
     except Exception as exc:  # noqa: BLE001
         print(f"[{ctx.label}] failed to leave call via OCS: {exc}")
     try:
-        if ctx.ws and not ctx.ws.closed:
+        if ctx.ws and hasattr(ctx.ws, "closed") and not ctx.ws.closed:
             await ctx.ws.send(json.dumps({"type": "bye", "bye": {}}))
     except Exception as exc:  # noqa: BLE001
         print(f"[{ctx.label}] failed to send bye: {exc}")
@@ -464,6 +464,9 @@ async def roundtrip(
         # Broadcast transcript to all known remote sessions (other participants).
         recipients = list(receiver.remote_sessions)
         if not recipients:
+            await asyncio.sleep(2)
+            recipients = list(receiver.remote_sessions)
+        if not recipients:
             print(f"[transcript] no recipients yet, skipping text='{text}'")
             return
         for sess in recipients:
@@ -588,12 +591,14 @@ async def roundtrip(
                             sid = entry.get("sessionid")
                             if sid and sid != ctx.signaling_session:
                                 ctx.remote_sessions.add(sid)
+                        print(f"[{label}] tracked remote sessions: {len(ctx.remote_sessions)}")
                     if evt.get("type") == "update":
                         users = evt.get("update", {}).get("users") or []
                         for user in users:
                             sid = user.get("sessionId") or user.get("sessionid")
                             if sid and sid != ctx.signaling_session:
                                 ctx.remote_sessions.add(sid)
+                        print(f"[{label}] tracked remote sessions: {len(ctx.remote_sessions)}")
                     continue
                 if data.get("type") != "message":
                     continue
