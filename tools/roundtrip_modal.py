@@ -13,6 +13,7 @@ Usage:
       --audio ../kyutai_modal/test_audio.wav \\
       --duration 30
 """
+from __future__ import annotations
 
 import argparse
 import asyncio
